@@ -3,6 +3,7 @@ const Message = require('../models/Message');
 const Chat = require('../models/Chat');
 const User = require('../models/User');
 const { redisSet, redisGet, redisDel, redisSadd, redisSrem, redisSmembers } = require('../config/redis');
+const { notifyUser } = require('../utils/webPush');
 
 // In-memory fallback for socket tracking
 const onlineUsers = new Map(); // userId -> Set of socketIds
@@ -92,13 +93,14 @@ const initializeSocket = (io) => {
           chatId: chatIdStr,
         });
 
-        // Mark as delivered for online recipients
+        // Mark as delivered for online recipients + push notify offline ones
         const recipientIds = chat.participants
           .map((p) => p.toString())
           .filter((id) => id !== userId);
 
         for (const recipientId of recipientIds) {
           if (onlineUsers.has(recipientId)) {
+            // User is online — mark delivered
             await Message.findByIdAndUpdate(populated._id, {
               $addToSet: { deliveredTo: { user: recipientId } },
             });
@@ -106,6 +108,46 @@ const initializeSocket = (io) => {
               messageId: populated._id,
               chatId: chatIdStr,
             });
+          } else {
+            // User is OFFLINE — send push notification
+            try {
+              const recipientUser = await User.findById(recipientId).select('name pushSubscription');
+              if (recipientUser?.pushSubscription) {
+                const senderName = populated.senderId?.name || 'Someone';
+                const chatName = chat.isGroup ? (chat.groupName || 'Group') : senderName;
+
+                let bodyText;
+                switch (populated.messageType) {
+                  case 'image':    bodyText = '📷 Photo'; break;
+                  case 'video':    bodyText = '🎥 Video'; break;
+                  case 'audio':    bodyText = '🎙️ Voice message'; break;
+                  case 'document': bodyText = '📄 Document'; break;
+                  default:
+                    bodyText = populated.message || 'New message';
+                    if (bodyText.length > 80) bodyText = bodyText.substring(0, 80) + '…';
+                }
+
+                await notifyUser(recipientUser, {
+                  title: chat.isGroup ? `${senderName} in ${chatName}` : senderName,
+                  body: bodyText,
+                  icon: populated.senderId?.avatar || '/chat-icon.svg',
+                  badge: '/badge-icon.png',
+                  tag: `chat-${chatIdStr}`,        // Groups notifications by chat
+                  renotify: true,                   // Always vibrate even if same tag
+                  data: {
+                    chatId: chatIdStr,
+                    senderId: userId,
+                    url: '/',
+                  },
+                  actions: [
+                    { action: 'open', title: 'Open Chat' },
+                    { action: 'dismiss', title: 'Dismiss' },
+                  ],
+                });
+              }
+            } catch (pushErr) {
+              console.error('Push notification failed for', recipientId, pushErr.message);
+            }
           }
         }
       } catch (err) {

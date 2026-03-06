@@ -26,6 +26,31 @@ export default function ChatPage() {
 
   useEffect(() => {
     fetchChats()
+
+    // Handle notification click → open the correct chat
+    const handleOpenChat = async (event) => {
+      const { chatId } = event.detail
+      if (!chatId) return
+
+      // Find chat in existing list or fetch it
+      const { chats, fetchChats: refetch, setActiveChat, fetchMessages } = useChatStore.getState()
+      let chat = chats.find(c => c._id === chatId)
+
+      if (!chat) {
+        await refetch()
+        chat = useChatStore.getState().chats.find(c => c._id === chatId)
+      }
+
+      if (chat) {
+        setActiveChat(chat)
+        fetchMessages(chatId, 1)
+        const socket = getSocket()
+        socket?.emit('chat:join', chatId)
+      }
+    }
+
+    window.addEventListener('sw:open-chat', handleOpenChat)
+    return () => window.removeEventListener('sw:open-chat', handleOpenChat)
   }, [])
 
   // Socket event listeners

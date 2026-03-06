@@ -15,7 +15,6 @@ const messageRoutes = require('./routes/messages');
 const uploadRoutes = require('./routes/uploads');
 const pushRoutes   = require('./routes/push');
 const statusRoutes = require('./routes/status');
-const statusRoutes = require('./routes/status');
 
 const { initializeSocket } = require('./sockets/socketHandler');
 const { connectDB } = require('./config/database');

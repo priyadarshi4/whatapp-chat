@@ -1,155 +1,164 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../utils/api'
 
-// Convert base64 VAPID key to Uint8Array (required by browser API)
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
   const rawData = window.atob(base64)
-  const outputArray = new Uint8Array(rawData.length)
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i)
-  }
-  return outputArray
+  const output = new Uint8Array(rawData.length)
+  for (let i = 0; i < rawData.length; i++) output[i] = rawData.charCodeAt(i)
+  return output
 }
 
+const isSupported = () =>
+  typeof window !== 'undefined' &&
+  'serviceWorker' in navigator &&
+  'PushManager' in window &&
+  'Notification' in window
+
 export function useNotifications() {
-  const [permission, setPermission] = useState(Notification.permission)
+  const [permission, setPermission] = useState(() =>
+    typeof Notification !== 'undefined' ? Notification.permission : 'default'
+  )
   const [isSubscribed, setIsSubscribed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [swReady, setSwReady] = useState(false)
+  const [swRegistration, setSwRegistration] = useState(null)
   const [error, setError] = useState(null)
+  const supported = isSupported()
 
-  // Check if push is supported
-  const isSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
-
-  // Register service worker on mount
+  // Register SW and check subscription state on mount
   useEffect(() => {
-    if (!isSupported) return
+    if (!supported) return
 
-    registerSW()
-  }, [])
+    const setup = async () => {
+      try {
+        // Register the service worker
+        const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
+        console.log('[Notif] SW registered, scope:', reg.scope)
 
-  const registerSW = async () => {
-    try {
-      const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
-      console.log('[Push] Service worker registered:', reg.scope)
+        // Wait until the SW is actually active
+        if (reg.installing) {
+          await new Promise(resolve => {
+            reg.installing.addEventListener('statechange', function() {
+              if (this.state === 'activated') resolve()
+            })
+          })
+        }
 
-      // Wait for SW to be ready
-      await navigator.serviceWorker.ready
-      setSwReady(true)
+        await navigator.serviceWorker.ready
+        setSwRegistration(reg)
 
-      // Check if already subscribed
-      const sub = await reg.pushManager.getSubscription()
-      setIsSubscribed(!!sub)
-    } catch (err) {
-      console.error('[Push] SW registration failed:', err)
-      setError('Service worker registration failed')
-    }
-  }
-
-  // Listen for messages from service worker (e.g. open chat on notification click)
-  useEffect(() => {
-    if (!isSupported) return
-
-    const handleSWMessage = (event) => {
-      if (event.data?.type === 'OPEN_CHAT' && event.data.chatId) {
-        // Dispatch custom event so ChatPage can handle it
-        window.dispatchEvent(new CustomEvent('sw:open-chat', { detail: { chatId: event.data.chatId } }))
+        // Check if browser already has an active subscription
+        const existing = await reg.pushManager.getSubscription()
+        if (existing) {
+          console.log('[Notif] Existing subscription found')
+          setIsSubscribed(true)
+        } else {
+          console.log('[Notif] No existing subscription')
+          setIsSubscribed(false)
+        }
+      } catch (err) {
+        console.error('[Notif] SW setup error:', err)
+        setError('Service worker setup failed: ' + err.message)
       }
     }
 
-    navigator.serviceWorker.addEventListener('message', handleSWMessage)
-    return () => navigator.serviceWorker.removeEventListener('message', handleSWMessage)
-  }, [])
+    setup()
 
-  // Request permission and subscribe
+    // Listen for messages from SW (notification click → open chat)
+    const onMessage = (event) => {
+      if (event.data?.type === 'OPEN_CHAT' && event.data.chatId) {
+        window.dispatchEvent(new CustomEvent('sw:open-chat', { detail: { chatId: event.data.chatId } }))
+      }
+    }
+    navigator.serviceWorker.addEventListener('message', onMessage)
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage)
+  }, [supported])
+
   const subscribe = useCallback(async () => {
-    if (!isSupported) {
-      setError('Push notifications not supported in this browser')
-      return false
-    }
-    if (!swReady) {
-      setError('Service worker not ready yet')
-      return false
-    }
+    if (!supported) { setError('Not supported in this browser'); return false }
+    if (!swRegistration) { setError('Service worker not ready'); return false }
 
     setIsLoading(true)
     setError(null)
 
     try {
-      // 1. Request notification permission
+      // Step 1: Ask for permission
       const perm = await Notification.requestPermission()
       setPermission(perm)
-
       if (perm !== 'granted') {
-        setError('Notification permission denied')
+        setError('Permission denied. Check browser notification settings.')
         setIsLoading(false)
         return false
       }
 
-      // 2. Get VAPID public key from server
-      const { data: keyData } = await api.get('/push/vapid-key')
-      const applicationServerKey = urlBase64ToUint8Array(keyData.publicKey)
+      // Step 2: Get VAPID public key from OUR server
+      let vapidKey
+      try {
+        const { data } = await api.get('/push/vapid-key')
+        vapidKey = data.publicKey
+      } catch (err) {
+        const msg = err.response?.status === 503
+          ? 'Server push not configured (missing VAPID keys in .env)'
+          : 'Could not fetch push config from server'
+        setError(msg)
+        setIsLoading(false)
+        return false
+      }
 
-      // 3. Subscribe to push
+      // Step 3: Create browser push subscription
       const reg = await navigator.serviceWorker.ready
-      const subscription = await reg.pushManager.subscribe({
-        userVisibleOnly: true,  // Required: must show notification for every push
-        applicationServerKey,
-      })
+      let subscription
+      try {
+        subscription = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidKey),
+        })
+      } catch (err) {
+        setError('Push subscription failed: ' + err.message)
+        setIsLoading(false)
+        return false
+      }
 
-      // 4. Send subscription to server
+      // Step 4: Send subscription to our backend
       await api.post('/push/subscribe', { subscription: subscription.toJSON() })
-
+      console.log('[Notif] Subscribed successfully!')
       setIsSubscribed(true)
       setIsLoading(false)
       return true
     } catch (err) {
-      console.error('[Push] Subscribe error:', err)
-      setError(err.message || 'Failed to enable notifications')
+      console.error('[Notif] Subscribe error:', err)
+      setError(err.message || 'Unknown error')
       setIsLoading(false)
       return false
     }
-  }, [swReady, isSupported])
+  }, [supported, swRegistration])
 
-  // Unsubscribe
   const unsubscribe = useCallback(async () => {
     setIsLoading(true)
     try {
-      const reg = await navigator.serviceWorker.ready
-      const sub = await reg.pushManager.getSubscription()
-      if (sub) {
-        await sub.unsubscribe()
+      if (swRegistration) {
+        const sub = await swRegistration.pushManager.getSubscription()
+        if (sub) await sub.unsubscribe()
       }
       await api.post('/push/unsubscribe')
       setIsSubscribed(false)
+      console.log('[Notif] Unsubscribed')
     } catch (err) {
-      console.error('[Push] Unsubscribe error:', err)
+      console.error('[Notif] Unsubscribe error:', err)
     }
     setIsLoading(false)
-  }, [])
+  }, [swRegistration])
 
-  // Send test notification
-  const sendTestNotification = useCallback(async () => {
+  const sendTest = useCallback(async () => {
     try {
       await api.post('/push/test')
       return true
     } catch (err) {
-      setError(err.response?.data?.error || 'Test failed')
+      setError(err.response?.data?.error || 'Test notification failed')
       return false
     }
   }, [])
 
-  return {
-    isSupported,
-    isSubscribed,
-    isLoading,
-    swReady,
-    permission,
-    error,
-    subscribe,
-    unsubscribe,
-    sendTestNotification,
-  }
+  return { supported, isSubscribed, isLoading, permission, error, subscribe, unsubscribe, sendTest }
 }

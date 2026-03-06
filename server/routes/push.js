@@ -2,68 +2,76 @@ const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
 const User = require('../models/User');
+const { sendPushToUser } = require('../utils/webPush');
 
-// @desc    Get VAPID public key (needed by client to subscribe)
-// @route   GET /api/push/vapid-key
+// GET /api/push/vapid-key
 router.get('/vapid-key', (req, res) => {
   const key = process.env.VAPID_PUBLIC_KEY;
   if (!key) {
-    return res.status(503).json({ error: 'Push notifications not configured on this server.' });
+    console.error('[Push] VAPID_PUBLIC_KEY not set in .env');
+    return res.status(503).json({ error: 'Push notifications not configured.' });
   }
   res.json({ publicKey: key });
 });
 
-// @desc    Save push subscription for current user
-// @route   POST /api/push/subscribe
+// POST /api/push/subscribe
 router.post('/subscribe', protect, async (req, res) => {
   try {
     const { subscription } = req.body;
-
     if (!subscription || !subscription.endpoint) {
-      return res.status(400).json({ error: 'Invalid subscription object.' });
+      return res.status(400).json({ error: 'Invalid subscription.' });
     }
-
+    console.log('[Push] Saving subscription for:', req.user.name, req.user._id.toString());
     await User.findByIdAndUpdate(req.user._id, { pushSubscription: subscription });
-    res.json({ success: true, message: 'Push subscription saved.' });
+    res.json({ success: true });
   } catch (err) {
-    console.error('Subscribe error:', err);
+    console.error('[Push] Subscribe error:', err);
     res.status(500).json({ error: 'Failed to save subscription.' });
   }
 });
 
-// @desc    Remove push subscription (user opts out)
-// @route   POST /api/push/unsubscribe
+// POST /api/push/unsubscribe
 router.post('/unsubscribe', protect, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user._id, { pushSubscription: null });
-    res.json({ success: true, message: 'Unsubscribed from push notifications.' });
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to unsubscribe.' });
   }
 });
 
-// @desc    Send a test push notification to the current user
-// @route   POST /api/push/test
+// POST /api/push/test
 router.post('/test', protect, async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
     if (!user?.pushSubscription) {
-      return res.status(400).json({ error: 'No push subscription found. Please enable notifications first.' });
+      return res.status(400).json({ error: 'No subscription. Enable notifications first.' });
     }
-
-    const { notifyUser } = require('../utils/webPush');
-    await notifyUser(user, {
-      title: '🔔 ChatApp Notifications',
-      body: 'Push notifications are working! You\'ll receive messages even when offline.',
+    const result = await sendPushToUser(user, {
+      title: 'ChatApp Test',
+      body: 'Push notifications are working!',
       icon: '/chat-icon.svg',
-      badge: '/badge-icon.png',
-      tag: 'test-notification',
+      tag: 'chatapp-test',
+      data: { url: '/', chatId: null },
     });
-
-    res.json({ success: true, message: 'Test notification sent.' });
+    if (!result) return res.status(500).json({ error: 'Push failed. Check VAPID keys in .env' });
+    res.json({ success: true });
   } catch (err) {
-    console.error('Test push error:', err);
-    res.status(500).json({ error: 'Failed to send test notification.' });
+    console.error('[Push] Test error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/push/status
+router.get('/status', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('pushSubscription');
+    res.json({
+      hasSubscription: !!user?.pushSubscription,
+      vapidConfigured: !!process.env.VAPID_PUBLIC_KEY,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Status check failed.' });
   }
 });
 

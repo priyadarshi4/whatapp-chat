@@ -3,7 +3,7 @@ const Message = require('../models/Message');
 const Chat = require('../models/Chat');
 const User = require('../models/User');
 const { redisSet, redisGet, redisDel, redisSadd, redisSrem, redisSmembers } = require('../config/redis');
-const { notifyUser } = require('../utils/webPush');
+const { sendPushToUser } = require('../utils/webPush');
 
 // In-memory fallback for socket tracking
 const onlineUsers = new Map(); // userId -> Set of socketIds
@@ -127,7 +127,7 @@ const initializeSocket = (io) => {
                     if (bodyText.length > 80) bodyText = bodyText.substring(0, 80) + '…';
                 }
 
-                await notifyUser(recipientUser, {
+                await sendPushToUser(recipientUser, {
                   title: chat.isGroup ? `${senderName} in ${chatName}` : senderName,
                   body: bodyText,
                   icon: populated.senderId?.avatar || '/chat-icon.svg',

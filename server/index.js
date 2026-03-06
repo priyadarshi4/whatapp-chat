@@ -13,10 +13,14 @@ const userRoutes = require('./routes/users');
 const chatRoutes = require('./routes/chats');
 const messageRoutes = require('./routes/messages');
 const uploadRoutes = require('./routes/uploads');
+const pushRoutes   = require('./routes/push');
+const statusRoutes = require('./routes/status');
+const statusRoutes = require('./routes/status');
 
 const { initializeSocket } = require('./sockets/socketHandler');
 const { connectDB } = require('./config/database');
 const { connectRedis } = require('./config/redis');
+const { initWebPush } = require('./utils/webPush');
 
 const app = express();
 const server = http.createServer(app);
@@ -61,6 +65,8 @@ app.use('/api/users', userRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/push',   pushRoutes);
+app.use('/api/status', statusRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -86,6 +92,7 @@ async function startServer() {
   try {
     await connectDB();
     await connectRedis();
+    initWebPush();
     server.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`📡 WebSocket ready`);

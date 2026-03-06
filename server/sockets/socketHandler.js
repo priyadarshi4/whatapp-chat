@@ -286,6 +286,26 @@ const initializeSocket = (io) => {
       });
     });
 
+    // ─── Status Events ────────────────────────────────────────────────────
+
+    // Broadcast new status to all contacts who are online
+    socket.on('status:new', async (status) => {
+      try {
+        const userChats = await Chat.find({ participants: userId }).select('participants').lean();
+        const contactIds = new Set();
+        userChats.forEach(c => c.participants.forEach(p => {
+          if (p.toString() !== userId) contactIds.add(p.toString());
+        }));
+        contactIds.forEach(cid => {
+          if (onlineUsers.has(cid)) {
+            io.to(cid).emit('status:new', status);
+          }
+        });
+      } catch (err) {
+        console.error('status:new broadcast error:', err);
+      }
+    });
+
     // ─── WebRTC Signaling ────────────────────────────────────────────────
 
     socket.on('webrtc:offer', ({ chatId, offer, to }) => {

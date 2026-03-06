@@ -1,26 +1,26 @@
 import React, { useEffect, useRef } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { useChatStore } from '../store/chatStore'
+import { useStatusStore } from '../store/statusStore'
+import { useCallStore } from '../store/callStore'
 import { getSocket } from '../socket/socket'
+import { useWebRTC } from '../hooks/useWebRTC'
 import Sidebar from '../components/sidebar/Sidebar'
 import ChatWindow from '../components/chat/ChatWindow'
 import WelcomeScreen from '../components/chat/WelcomeScreen'
+import CallScreen from '../components/call/CallScreen'
+import IncomingCallModal, { setPendingOffer } from '../components/call/IncomingCallModal'
+import { AnimatePresence } from 'framer-motion'
 
 export default function ChatPage() {
   const { user } = useAuthStore()
   const {
-    activeChat,
-    fetchChats,
-    addMessage,
-    updateMessage,
-    removeMessage,
-    setTyping,
-    setUserOnline,
-    updateReactions,
-    addChat,
-    updateChatLastMessage,
-    incrementUnread,
+    activeChat, fetchChats, addMessage, updateMessage,
+    removeMessage, setTyping, setUserOnline, updateReactions,
+    addChat, updateChatLastMessage, incrementUnread,
   } = useChatStore()
+  const { receiveIncomingCall, reset: resetCall, callState } = useCallStore()
+  const { handleOffer, handleAnswer, handleIceCandidate, endCall } = useWebRTC()
 
   const notificationSound = useRef(null)
 
@@ -163,6 +163,44 @@ export default function ChatPage() {
       addChat(chat)
     })
 
+    // Real-time status from contacts
+    socket.on('status:new', (status) => {
+      useStatusStore.getState().addStatusFromSocket(status)
+    })
+
+    // ── Call events ──────────────────────────────────────────────
+    socket.on('call:incoming', ({ from, chatId, callType, caller }) => {
+      // Don't accept a second call if already in one
+      const { callState } = useCallStore.getState()
+      if (callState !== 'idle') return
+      receiveIncomingCall({ caller, chatId, callType })
+    })
+
+    socket.on('webrtc:offer', ({ offer, from, chatId }) => {
+      handleOffer(offer)
+    })
+
+    socket.on('webrtc:answer', ({ answer }) => {
+      handleAnswer(answer)
+    })
+
+    socket.on('webrtc:ice-candidate', ({ candidate }) => {
+      handleIceCandidate(candidate)
+    })
+
+    socket.on('call:accepted', ({ from }) => {
+      // Caller is notified callee accepted — call flow continues via webrtc:answer
+    })
+
+    socket.on('call:declined', () => {
+      useCallStore.getState().setCallState('idle')
+      useCallStore.getState().reset()
+    })
+
+    socket.on('call:ended', () => {
+      endCall()
+    })
+
     return () => {
       socket.off('message:received')
       socket.off('message:edited')
@@ -174,6 +212,14 @@ export default function ChatPage() {
       socket.off('user:online')
       socket.off('user:offline')
       socket.off('chat:created')
+      socket.off('status:new')
+      socket.off('call:incoming')
+      socket.off('webrtc:offer')
+      socket.off('webrtc:answer')
+      socket.off('webrtc:ice-candidate')
+      socket.off('call:accepted')
+      socket.off('call:declined')
+      socket.off('call:ended')
     }
   }, [user])
 
@@ -190,6 +236,12 @@ export default function ChatPage() {
       <div className="flex-1 flex">
         {activeChat ? <ChatWindow /> : <WelcomeScreen />}
       </div>
+
+      {/* Call UI — rendered above everything */}
+      <AnimatePresence>
+        {['outgoing', 'connecting', 'active'].includes(callState) && <CallScreen key="call-screen" />}
+        {callState === 'incoming' && <IncomingCallModal key="incoming" />}
+      </AnimatePresence>
     </div>
   )
 }

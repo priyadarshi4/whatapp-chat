@@ -1,9 +1,12 @@
 import React, { useState } from 'react'
-import { FiSearch, FiMoreVertical, FiArrowLeft } from 'react-icons/fi'
+import { FiSearch, FiMoreVertical, FiArrowLeft, FiPhone, FiVideo } from 'react-icons/fi'
 import { motion, AnimatePresence } from 'framer-motion'
 import { formatDistanceToNow } from 'date-fns'
 import { useAuthStore } from '../../store/authStore'
 import { useChatStore } from '../../store/chatStore'
+import { useCallStore } from '../../store/callStore'
+import { useWebRTC } from '../../hooks/useWebRTC'
+import { getSocket } from '../../socket/socket'
 import api from '../../utils/api'
 import toast from 'react-hot-toast'
 
@@ -18,6 +21,8 @@ function getOtherParticipant(chat, userId) {
 export default function ChatHeader() {
   const { user } = useAuthStore()
   const { activeChat, setActiveChat, typingUsers, updateChat } = useChatStore()
+  const { callState, startOutgoingCall } = useCallStore()
+  const { startCall } = useWebRTC()
   const [showMenu, setShowMenu] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -26,6 +31,13 @@ export default function ChatHeader() {
   if (!activeChat) return null
 
   const otherUser = !activeChat.isGroup ? getOtherParticipant(activeChat, user._id) : null
+
+  const initiateCall = async (type) => {
+    if (callState !== 'idle') { toast.error('Already in a call'); return }
+    if (!otherUser?._id) { toast.error('Cannot call a group'); return }
+    startOutgoingCall({ callee: otherUser, chatId: activeChat._id, callType: type, caller: user })
+    await startCall()
+  }
   const typing = typingUsers[activeChat._id] || []
   const isTyping = typing.length > 0
 
@@ -86,6 +98,28 @@ export default function ChatHeader() {
 
       {/* Actions */}
       <div className="flex items-center gap-1">
+        {/* Call buttons — only for 1-1 chats */}
+        {!activeChat.isGroup && (
+          <>
+            <button
+              onClick={() => initiateCall('audio')}
+              disabled={callState !== 'idle'}
+              title="Voice call"
+              className="icon-btn disabled:opacity-40"
+            >
+              <FiPhone size={19} />
+            </button>
+            <button
+              onClick={() => initiateCall('video')}
+              disabled={callState !== 'idle'}
+              title="Video call"
+              className="icon-btn disabled:opacity-40"
+            >
+              <FiVideo size={19} />
+            </button>
+          </>
+        )}
+
         <button onClick={() => { setShowSearch(!showSearch); setSearchQuery(''); setSearchResults([]) }} className="icon-btn">
           <FiSearch size={20} />
         </button>

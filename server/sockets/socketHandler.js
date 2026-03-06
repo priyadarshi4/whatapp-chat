@@ -44,6 +44,10 @@ const initializeSocket = (io) => {
     const userChats = await Chat.find({ participants: userId }).select('participants');
     const chatRooms = userChats.map((c) => c._id.toString());
 
+    // Join personal userId room (for direct call/push routing)
+    socket.join(userId);
+
+    // Join all chat rooms
     chatRooms.forEach((chatId) => {
       socket.join(chatId);
     });
@@ -306,22 +310,29 @@ const initializeSocket = (io) => {
       }
     });
 
-    // ─── WebRTC Signaling ────────────────────────────────────────────────
+    // ─── WebRTC / Call Signaling ─────────────────────────────────────────
+    // All call events are routed to the recipient's personal room (userId)
+    // Each user joins their own userId room on connect (see above)
 
     socket.on('webrtc:offer', ({ chatId, offer, to }) => {
-      socket.to(to).emit('webrtc:offer', { offer, from: userId, chatId });
+      io.to(to).emit('webrtc:offer', { offer, from: userId, chatId });
     });
 
     socket.on('webrtc:answer', ({ chatId, answer, to }) => {
-      socket.to(to).emit('webrtc:answer', { answer, from: userId, chatId });
+      io.to(to).emit('webrtc:answer', { answer, from: userId, chatId });
     });
 
     socket.on('webrtc:ice-candidate', ({ chatId, candidate, to }) => {
-      socket.to(to).emit('webrtc:ice-candidate', { candidate, from: userId, chatId });
+      io.to(to).emit('webrtc:ice-candidate', { candidate, from: userId, chatId });
     });
 
-    socket.on('call:incoming', ({ to, from, chatId, callType }) => {
-      io.to(to).emit('call:incoming', { from, chatId, callType, caller: socket.user });
+    socket.on('call:incoming', ({ to, chatId, callType }) => {
+      io.to(to).emit('call:incoming', {
+        from: userId,
+        chatId,
+        callType,
+        caller: { _id: userId, name: socket.user.name, avatar: socket.user.avatar },
+      });
     });
 
     socket.on('call:accept', ({ to, chatId }) => {

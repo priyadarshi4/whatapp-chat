@@ -8,11 +8,14 @@ import SearchPanel from './SearchPanel'
 import NewChatPanel from './NewChatPanel'
 import ProfilePanel from './ProfilePanel'
 import NewGroupPanel from './NewGroupPanel'
+import NotificationBell from '../ui/NotificationBell'
+import StatusBar from '../status/StatusBar'
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore()
   const { searchQuery, setSearchQuery, setSidePanel, sidePanel } = useChatStore()
   const [showMenu, setShowMenu] = useState(false)
+  const [showUploader, setShowUploader] = useState(false)
 
   const handleLogout = async () => {
     await logout()
@@ -34,6 +37,8 @@ export default function Sidebar() {
         </button>
 
         <div className="flex items-center gap-2">
+          <NotificationBell />
+
           <button
             onClick={() => setSidePanel('new-chat')}
             className="icon-btn"
@@ -59,6 +64,7 @@ export default function Sidebar() {
                 >
                   {[
                     { label: 'New group', action: () => { setSidePanel('new-group'); setShowMenu(false) } },
+                    { label: 'Add Status', action: () => { setShowUploader(true); setShowMenu(false) } },
                     { label: 'Profile', action: () => { setSidePanel('profile'); setShowMenu(false) } },
                     { label: 'Starred messages', action: () => { setSidePanel('starred'); setShowMenu(false) } },
                     { label: 'Log out', action: handleLogout },
@@ -92,6 +98,9 @@ export default function Sidebar() {
           />
         </div>
       </div>
+
+      {/* Status Bar */}
+      <StatusBar />
 
       {/* Main content */}
       <div className="flex-1 overflow-hidden relative">
@@ -145,6 +154,12 @@ export default function Sidebar() {
           )}
         </AnimatePresence>
       </div>
+      {/* Status Uploader modal */}
+      <AnimatePresence>
+        {showUploader && (
+          <StatusUploader onClose={() => setShowUploader(false)} />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

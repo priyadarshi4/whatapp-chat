@@ -1,87 +1,72 @@
 import { create } from 'zustand'
 
-// Call states: idle → ringing → connecting → active → ended
 export const useCallStore = create((set, get) => ({
-  // ── State ──────────────────────────────────────────────────────
-  callState: 'idle',          // 'idle' | 'outgoing' | 'incoming' | 'connecting' | 'active' | 'ended'
-  callType: null,             // 'audio' | 'video'
-  caller: null,               // user object of the person who called
-  callee: null,               // user object being called
+  callState: 'idle',   // idle | outgoing | incoming | connecting | active
+  callType: null,      // audio | video
+  caller: null,        // who is calling (populated on callee side)
+  callee: null,        // who is being called (populated on caller side)
   chatId: null,
-  callDuration: 0,            // seconds
+  callDuration: 0,
   error: null,
 
-  // Media state
   localStream: null,
   remoteStream: null,
   isLocalVideoOn: true,
   isLocalAudioOn: true,
-  isRemoteVideoOn: true,
   isScreenSharing: false,
 
-  // WebRTC internals
   peerConnection: null,
-  iceCandidateQueue: [],      // buffer ICE candidates before remote desc is set
+  pendingOffer: null,        // offer stored before user hits Answer
+  iceCandidateQueue: [],     // ICE candidates buffered before remote desc set
 
-  // ── Actions ────────────────────────────────────────────────────
-  setCallState: (callState) => set({ callState }),
-  setError: (error) => set({ error }),
+  setCallState: (s) => set({ callState: s }),
+  setError: (e) => set({ error: e }),
 
-  startOutgoingCall: ({ callee, chatId, callType }) =>
-    set({ callState: 'outgoing', callee, chatId, callType, error: null, callDuration: 0 }),
+  // Caller sets this — caller = current user, callee = other person
+  startOutgoingCall: ({ callee, chatId, callType, caller }) =>
+    set({ callState: 'outgoing', callee, caller, chatId, callType, error: null, callDuration: 0 }),
 
+  // Callee sets this — caller = person who called, chatId, callType
   receiveIncomingCall: ({ caller, chatId, callType }) =>
     set({ callState: 'incoming', caller, chatId, callType, error: null }),
 
+  setPendingOffer: (offer) => set({ pendingOffer: offer }),
+
   setConnecting: () => set({ callState: 'connecting' }),
-  setActive: () => set({ callState: 'active' }),
+  setActive:     () => set({ callState: 'active' }),
 
-  setLocalStream: (localStream) => set({ localStream }),
-  setRemoteStream: (remoteStream) => set({ remoteStream }),
-  setPeerConnection: (peerConnection) => set({ peerConnection }),
+  setLocalStream:    (s) => set({ localStream: s }),
+  setRemoteStream:   (s) => set({ remoteStream: s }),
+  setPeerConnection: (p) => set({ peerConnection: p }),
 
-  queueIceCandidate: (candidate) =>
-    set(state => ({ iceCandidateQueue: [...state.iceCandidateQueue, candidate] })),
-  clearIceQueue: () => set({ iceCandidateQueue: [] }),
+  queueIceCandidate: (c) => set(s => ({ iceCandidateQueue: [...s.iceCandidateQueue, c] })),
+  clearIceQueue:     ()  => set({ iceCandidateQueue: [] }),
 
   toggleLocalAudio: () => {
     const { localStream } = get()
-    if (!localStream) return
-    localStream.getAudioTracks().forEach(t => { t.enabled = !t.enabled })
-    set(state => ({ isLocalAudioOn: !state.isLocalAudioOn }))
+    localStream?.getAudioTracks().forEach(t => { t.enabled = !t.enabled })
+    set(s => ({ isLocalAudioOn: !s.isLocalAudioOn }))
   },
-
   toggleLocalVideo: () => {
     const { localStream } = get()
-    if (!localStream) return
-    localStream.getVideoTracks().forEach(t => { t.enabled = !t.enabled })
-    set(state => ({ isLocalVideoOn: !state.isLocalVideoOn }))
+    localStream?.getVideoTracks().forEach(t => { t.enabled = !t.enabled })
+    set(s => ({ isLocalVideoOn: !s.isLocalVideoOn }))
   },
 
-  incrementDuration: () => set(state => ({ callDuration: state.callDuration + 1 })),
+  incrementDuration: () => set(s => ({ callDuration: s.callDuration + 1 })),
 
   reset: () => {
-    const { localStream, peerConnection } = get()
-    // Clean up media tracks
-    if (localStream) localStream.getTracks().forEach(t => t.stop())
-    // Close peer connection
-    if (peerConnection) peerConnection.close()
+    const { localStream } = get()
+    // Stop all local media tracks
+    localStream?.getTracks().forEach(t => t.stop())
+    // Note: peerConnection is closed by useWebRTC endCall/declineCall directly
+    // on the module-level singleton — don't close the stale store reference here
     set({
-      callState: 'idle',
-      callType: null,
-      caller: null,
-      callee: null,
-      chatId: null,
-      callDuration: 0,
-      error: null,
-      localStream: null,
-      remoteStream: null,
-      isLocalVideoOn: true,
-      isLocalAudioOn: true,
-      isRemoteVideoOn: true,
-      isScreenSharing: false,
-      peerConnection: null,
-      iceCandidateQueue: [],
+      callState: 'idle', callType: null, caller: null, callee: null,
+      chatId: null, callDuration: 0, error: null,
+      localStream: null, remoteStream: null,
+      isLocalVideoOn: true, isLocalAudioOn: true, isScreenSharing: false,
+      peerConnection: null, pendingOffer: null, iceCandidateQueue: [],
     })
   },
 }))

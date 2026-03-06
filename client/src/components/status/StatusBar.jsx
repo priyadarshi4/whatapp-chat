@@ -10,42 +10,34 @@ export default function StatusBar() {
   const { statusGroups, fetchFeed, isLoading } = useStatusStore()
   const { user } = useAuthStore()
 
-  const [viewerOpen, setViewerOpen]   = useState(false)
-  const [startGroup, setStartGroup]   = useState(0)
-  const [uploaderOpen, setUploaderOpen] = useState(false)
+  const [viewerOpen,    setViewerOpen]    = useState(false)
+  const [startGroup,    setStartGroup]    = useState(0)
+  const [uploaderOpen,  setUploaderOpen]  = useState(false)
 
   useEffect(() => { fetchFeed() }, [])
 
-  // Separate own group from others
-  const myGroup    = statusGroups.find(g => g.user._id?.toString() === user._id?.toString())
+  const myGroup     = statusGroups.find(g => g.user._id?.toString() === user._id?.toString())
   const otherGroups = statusGroups.filter(g => g.user._id?.toString() !== user._id?.toString())
+  const allOrdered  = myGroup ? [myGroup, ...otherGroups] : otherGroups
 
   const openViewer = (group) => {
-    // Build ordered list: my group first (if exists), then others
-    const allGroups = myGroup ? [myGroup, ...otherGroups] : otherGroups
-    const idx = allGroups.findIndex(g => g.user._id?.toString() === group.user._id?.toString())
+    const idx = allOrdered.findIndex(g => g.user._id?.toString() === group.user._id?.toString())
     setStartGroup(Math.max(0, idx))
     setViewerOpen(true)
   }
 
-  // All groups in display order for the viewer
-  const allGroupsOrdered = myGroup ? [myGroup, ...otherGroups] : otherGroups
-
-  if (!isLoading && statusGroups.length === 0 && !user) return null
-
   return (
     <>
       <div className="px-3 py-2 border-b border-chat-border">
-        <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-thin" style={{ scrollbarWidth: 'none' }}>
-          {/* My status */}
+        <div className="flex gap-3 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+
+          {/* My status — ring shows if I have active statuses */}
           <StatusRing
             user={user}
             isOwn
+            hasStatus={!!myGroup}
             hasUnread={false}
-            onClick={() => {
-              if (myGroup) openViewer(myGroup)
-              else setUploaderOpen(true)
-            }}
+            onClick={() => myGroup ? openViewer(myGroup) : setUploaderOpen(true)}
           />
 
           {/* Others */}
@@ -53,6 +45,7 @@ export default function StatusBar() {
             <StatusRing
               key={g.user._id}
               user={g.user}
+              hasStatus={true}
               hasUnread={g.hasUnread}
               onClick={() => openViewer(g)}
             />
@@ -66,19 +59,12 @@ export default function StatusBar() {
         </div>
       </div>
 
-      {/* Uploader modal */}
       <AnimatePresence>
         {uploaderOpen && <StatusUploader onClose={() => { setUploaderOpen(false); fetchFeed() }} />}
       </AnimatePresence>
-
-      {/* Fullscreen viewer */}
       <AnimatePresence>
-        {viewerOpen && allGroupsOrdered.length > 0 && (
-          <StatusViewer
-            groups={allGroupsOrdered}
-            startGroupIndex={startGroup}
-            onClose={() => setViewerOpen(false)}
-          />
+        {viewerOpen && allOrdered.length > 0 && (
+          <StatusViewer groups={allOrdered} startGroupIndex={startGroup} onClose={() => setViewerOpen(false)} />
         )}
       </AnimatePresence>
     </>

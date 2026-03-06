@@ -314,8 +314,15 @@ const initializeSocket = (io) => {
     // All call events are routed to the recipient's personal room (userId)
     // Each user joins their own userId room on connect (see above)
 
-    socket.on('webrtc:offer', ({ chatId, offer, to }) => {
-      io.to(to).emit('webrtc:offer', { offer, from: userId, chatId });
+    // offer is bundled WITH call:incoming so callee receives both atomically
+    socket.on('call:incoming', ({ to, chatId, callType, offer }) => {
+      io.to(to).emit('call:incoming', {
+        from: userId,
+        chatId,
+        callType,
+        offer,
+        caller: { _id: userId, name: socket.user.name, avatar: socket.user.avatar },
+      });
     });
 
     socket.on('webrtc:answer', ({ chatId, answer, to }) => {
@@ -324,15 +331,6 @@ const initializeSocket = (io) => {
 
     socket.on('webrtc:ice-candidate', ({ chatId, candidate, to }) => {
       io.to(to).emit('webrtc:ice-candidate', { candidate, from: userId, chatId });
-    });
-
-    socket.on('call:incoming', ({ to, chatId, callType }) => {
-      io.to(to).emit('call:incoming', {
-        from: userId,
-        chatId,
-        callType,
-        caller: { _id: userId, name: socket.user.name, avatar: socket.user.avatar },
-      });
     });
 
     socket.on('call:accept', ({ to, chatId }) => {

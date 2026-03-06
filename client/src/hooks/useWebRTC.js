@@ -2,294 +2,225 @@ import { useCallback, useRef, useEffect } from 'react'
 import { useCallStore } from '../store/callStore'
 import { getSocket } from '../socket/socket'
 
-// ── STUN/TURN config ─────────────────────────────────────────────────────────
-// Uses Google's free STUN + Open Relay TURN servers for good connectivity
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
+    { urls: 'turn:openrelay.metered.ca:80',      username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443',     username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
   ],
   iceCandidatePoolSize: 10,
 }
 
 export function useWebRTC() {
-  const {
-    callType, chatId, callState,
-    setLocalStream, setRemoteStream, setPeerConnection,
-    setConnecting, setActive, setCallState,
-    queueIceCandidate, iceCandidateQueue, clearIceQueue,
-    reset, localStream, peerConnection,
-  } = useCallStore()
-
-  const pcRef = useRef(null)
+  const pcRef       = useRef(null)
   const durationRef = useRef(null)
 
-  // ── Get user media ─────────────────────────────────────────────────────────
-  const getMedia = useCallback(async (type = callType) => {
-    const constraints = {
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        sampleRate: 48000,
-      },
-      video: type === 'video' ? {
-        width: { ideal: 1280, max: 1920 },
-        height: { ideal: 720, max: 1080 },
-        frameRate: { ideal: 30, max: 60 },
-        facingMode: 'user',
-      } : false,
-    }
-    const stream = await navigator.mediaDevices.getUserMedia(constraints)
-    setLocalStream(stream)
-    return stream
-  }, [callType, setLocalStream])
+  // ─── helpers ─────────────────────────────────────────────────────────────
+  const startDurationTimer = useCallback(() => {
+    if (durationRef.current) return
+    durationRef.current = setInterval(() => useCallStore.getState().incrementDuration(), 1000)
+  }, [])
 
-  // ── Create peer connection ─────────────────────────────────────────────────
-  const createPeerConnection = useCallback((stream) => {
+  const clearDurationTimer = useCallback(() => {
+    if (durationRef.current) { clearInterval(durationRef.current); durationRef.current = null }
+  }, [])
+
+  useEffect(() => () => clearDurationTimer(), [clearDurationTimer])
+
+  // ─── get user media ───────────────────────────────────────────────────────
+  const getMedia = useCallback(async (callType) => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: callType === 'video'
+        ? { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 }, facingMode: 'user' }
+        : false,
+    })
+    useCallStore.getState().setLocalStream(stream)
+    return stream
+  }, [])
+
+  // ─── create RTCPeerConnection ─────────────────────────────────────────────
+  const createPC = useCallback((stream) => {
     const pc = new RTCPeerConnection(ICE_SERVERS)
     pcRef.current = pc
-    setPeerConnection(pc)
+    useCallStore.getState().setPeerConnection(pc)
 
-    // Add local tracks
-    stream.getTracks().forEach(track => pc.addTrack(track, stream))
+    // Add our tracks
+    stream.getTracks().forEach(t => pc.addTrack(t, stream))
 
     // Remote stream
     const remoteStream = new MediaStream()
-    setRemoteStream(remoteStream)
-    pc.ontrack = (event) => {
-      event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track))
-      setRemoteStream(new MediaStream(remoteStream.getTracks()))
+    useCallStore.getState().setRemoteStream(remoteStream)
+
+    pc.ontrack = (e) => {
+      e.streams[0].getTracks().forEach(t => {
+        if (!remoteStream.getTrackById(t.id)) remoteStream.addTrack(t)
+      })
+      // Trigger re-render by setting a new object reference
+      useCallStore.getState().setRemoteStream(new MediaStream(remoteStream.getTracks()))
     }
 
-    // ICE candidates → relay to peer via socket
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        const socket = getSocket()
-        const { chatId, caller, callee } = useCallStore.getState()
-        const to = caller?._id || callee?._id
-        socket?.emit('webrtc:ice-candidate', { chatId, candidate: event.candidate, to })
-      }
+    // ICE — send to the OTHER person
+    pc.onicecandidate = (e) => {
+      if (!e.candidate) return
+      const { caller, callee, chatId } = useCallStore.getState()
+      // callee is set on caller side, caller is set on callee side
+      const to = callee?._id || caller?._id
+      if (!to) return
+      getSocket()?.emit('webrtc:ice-candidate', { chatId, candidate: e.candidate, to })
     }
 
     pc.oniceconnectionstatechange = () => {
-      console.log('[WebRTC] ICE state:', pc.iceConnectionState)
-      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-        setActive()
+      const state = pc.iceConnectionState
+      console.log('[WebRTC] ICE:', state)
+      if (state === 'connected' || state === 'completed') {
+        useCallStore.getState().setActive()
         startDurationTimer()
       }
-      if (pc.iceConnectionState === 'failed') {
-        useCallStore.getState().setError('Connection failed. Check your network.')
+      if (state === 'failed') {
+        useCallStore.getState().setError('Connection failed — check network / firewall.')
       }
-      if (pc.iceConnectionState === 'disconnected') {
+      if (state === 'disconnected') {
         setTimeout(() => {
-          if (pcRef.current?.iceConnectionState === 'disconnected') {
-            endCall()
-          }
-        }, 3000)
+          if (pcRef.current?.iceConnectionState === 'disconnected') endCall()
+        }, 4000)
       }
     }
 
     pc.onconnectionstatechange = () => {
-      console.log('[WebRTC] Connection state:', pc.connectionState)
       if (pc.connectionState === 'failed') endCall()
     }
 
     return pc
-  }, [setPeerConnection, setRemoteStream, setActive])
+  }, [startDurationTimer])
 
-  // ── Start as caller (create offer) ────────────────────────────────────────
+  // ─── flush queued ICE candidates ──────────────────────────────────────────
+  const flushIceQueue = useCallback(async (pc) => {
+    const { iceCandidateQueue } = useCallStore.getState()
+    for (const c of iceCandidateQueue) {
+      await pc.addIceCandidate(new RTCIceCandidate(c)).catch(console.warn)
+    }
+    useCallStore.getState().clearIceQueue()
+  }, [])
+
+  // ─── CALLER: create offer and ring the callee ─────────────────────────────
   const startCall = useCallback(async () => {
+    const { callee, chatId, callType } = useCallStore.getState()
     try {
-      setConnecting()
-      const stream = await getMedia()
-      const pc = createPeerConnection(stream)
+      useCallStore.getState().setConnecting()
+      const stream = await getMedia(callType)
+      const pc = createPC(stream)
 
       const offer = await pc.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: callType === 'video',
-        voiceActivityDetection: true,
       })
       await pc.setLocalDescription(offer)
 
-      const socket = getSocket()
-      const { callee, chatId, callType: ct, caller } = useCallStore.getState()
-      
-      // Send call invitation
-      socket?.emit('call:incoming', {
-        to: callee._id,
-        from: caller?._id,
-        chatId,
-        callType: ct,
-      })
-
-      // Send the offer
-      socket?.emit('webrtc:offer', { chatId, offer, to: callee._id })
+      // Single emit: offer travels WITH the ring notification — no ordering race
+      getSocket()?.emit('call:incoming', { to: callee._id, chatId, callType, offer })
     } catch (err) {
-      console.error('[WebRTC] startCall error:', err)
+      console.error('[WebRTC] startCall:', err)
       useCallStore.getState().setError(
         err.name === 'NotAllowedError' ? 'Camera/mic permission denied.' :
         err.name === 'NotFoundError'   ? 'Camera or microphone not found.' :
-        'Could not start call.'
+        'Could not start call: ' + err.message
       )
+      useCallStore.getState().reset()
     }
-  }, [getMedia, createPeerConnection, callType, setConnecting])
+  }, [getMedia, createPC])
 
-  // ── Answer incoming call ───────────────────────────────────────────────────
-  const answerCall = useCallback(async (offer) => {
+  // ─── CALLEE: answer with the stored offer ─────────────────────────────────
+  const answerCall = useCallback(async () => {
+    const { pendingOffer, caller, chatId, callType } = useCallStore.getState()
+    if (!pendingOffer) {
+      useCallStore.getState().setError('No offer received — try again.')
+      return
+    }
     try {
-      setConnecting()
-      const stream = await getMedia()
-      const pc = createPeerConnection(stream)
+      useCallStore.getState().setConnecting()
+      const stream = await getMedia(callType)
+      const pc = createPC(stream)
 
-      await pc.setRemoteDescription(new RTCSessionDescription(offer))
-
-      // Flush queued ICE candidates
-      const { iceCandidateQueue: queue } = useCallStore.getState()
-      for (const candidate of queue) {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.warn)
-      }
-      clearIceQueue()
+      await pc.setRemoteDescription(new RTCSessionDescription(pendingOffer))
+      await flushIceQueue(pc)
 
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
 
-      const socket = getSocket()
-      const { caller, chatId } = useCallStore.getState()
-      socket?.emit('webrtc:answer', { chatId, answer, to: caller._id })
+      getSocket()?.emit('webrtc:answer', { to: caller._id, chatId, answer })
     } catch (err) {
-      console.error('[WebRTC] answerCall error:', err)
+      console.error('[WebRTC] answerCall:', err)
       useCallStore.getState().setError(
-        err.name === 'NotAllowedError' ? 'Camera/mic permission denied.' : 'Could not answer call.'
+        err.name === 'NotAllowedError' ? 'Camera/mic permission denied — allow access and try again.' :
+        err.name === 'NotFoundError'   ? 'Camera or microphone not found.' :
+        'Could not answer call: ' + err.message
       )
+      // Go back to incoming so user can retry, not reset
+      useCallStore.getState().setCallState('incoming')
     }
-  }, [getMedia, createPeerConnection, clearIceQueue, setConnecting])
+  }, [getMedia, createPC, flushIceQueue])
 
-  // ── Handle incoming offer (called by ChatPage socket listener) ────────────
-  const handleOffer = useCallback(async (offer) => {
-    // If we already have a PC (answered), set remote desc
-    const pc = pcRef.current || useCallStore.getState().peerConnection
-    if (pc && pc.signalingState !== 'closed') {
-      await pc.setRemoteDescription(new RTCSessionDescription(offer))
-      // Flush queued ICE
-      const { iceCandidateQueue: queue } = useCallStore.getState()
-      for (const c of queue) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(console.warn)
-      clearIceQueue()
-    }
-  }, [clearIceQueue])
-
-  // ── Handle incoming answer ────────────────────────────────────────────────
+  // ─── CALLER receives answer ───────────────────────────────────────────────
   const handleAnswer = useCallback(async (answer) => {
-    const pc = pcRef.current || useCallStore.getState().peerConnection
-    if (pc && pc.signalingState !== 'closed') {
-      await pc.setRemoteDescription(new RTCSessionDescription(answer))
-      // Flush any queued ICE candidates
-      const { iceCandidateQueue: queue } = useCallStore.getState()
-      for (const c of queue) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(console.warn)
-      clearIceQueue()
-    }
-  }, [clearIceQueue])
+    const pc = pcRef.current
+    if (!pc || pc.signalingState === 'closed') return
+    await pc.setRemoteDescription(new RTCSessionDescription(answer))
+    await flushIceQueue(pc)
+  }, [flushIceQueue])
 
-  // ── Handle incoming ICE candidate ─────────────────────────────────────────
+  // ─── Both sides handle ICE ────────────────────────────────────────────────
   const handleIceCandidate = useCallback(async (candidate) => {
-    const pc = pcRef.current || useCallStore.getState().peerConnection
+    const pc = pcRef.current
     if (pc && pc.remoteDescription && pc.signalingState !== 'closed') {
       await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.warn)
     } else {
-      queueIceCandidate(candidate)
-    }
-  }, [queueIceCandidate])
-
-  // ── Toggle screen share ───────────────────────────────────────────────────
-  const toggleScreenShare = useCallback(async () => {
-    const { isScreenSharing, localStream } = useCallStore.getState()
-    const pc = pcRef.current
-
-    try {
-      if (!isScreenSharing) {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true })
-        const screenTrack = screenStream.getVideoTracks()[0]
-        const sender = pc?.getSenders().find(s => s.track?.kind === 'video')
-        if (sender) await sender.replaceTrack(screenTrack)
-
-        screenTrack.onended = () => {
-          toggleScreenShare()
-        }
-
-        useCallStore.setState({ isScreenSharing: true })
-      } else {
-        const camStream = await navigator.mediaDevices.getUserMedia({ video: true })
-        const camTrack = camStream.getVideoTracks()[0]
-        const sender = pc?.getSenders().find(s => s.track?.kind === 'video')
-        if (sender) await sender.replaceTrack(camTrack)
-        useCallStore.setState({ isScreenSharing: false })
-      }
-    } catch (err) {
-      console.error('[WebRTC] Screen share error:', err)
+      useCallStore.getState().queueIceCandidate(candidate)
     }
   }, [])
 
-  // ── End call ─────────────────────────────────────────────────────────────
+  // ─── Screen share toggle ──────────────────────────────────────────────────
+  const toggleScreenShare = useCallback(async () => {
+    const { isScreenSharing } = useCallStore.getState()
+    const pc = pcRef.current
+    try {
+      if (!isScreenSharing) {
+        const screen = await navigator.mediaDevices.getDisplayMedia({ video: true })
+        const track  = screen.getVideoTracks()[0]
+        const sender = pc?.getSenders().find(s => s.track?.kind === 'video')
+        if (sender) await sender.replaceTrack(track)
+        track.onended = () => toggleScreenShare()
+        useCallStore.setState({ isScreenSharing: true })
+      } else {
+        const cam    = await navigator.mediaDevices.getUserMedia({ video: true })
+        const track  = cam.getVideoTracks()[0]
+        const sender = pc?.getSenders().find(s => s.track?.kind === 'video')
+        if (sender) await sender.replaceTrack(track)
+        useCallStore.setState({ isScreenSharing: false })
+      }
+    } catch (err) { console.error('[WebRTC] screenShare:', err) }
+  }, [])
+
+  // ─── End call ─────────────────────────────────────────────────────────────
   const endCall = useCallback(() => {
     clearDurationTimer()
-    const socket = getSocket()
     const { caller, callee, chatId, callState } = useCallStore.getState()
-    const otherId = caller?._id || callee?._id
-
-    if (callState !== 'idle' && otherId) {
-      socket?.emit('call:end', { to: otherId, chatId })
+    const to = callee?._id || caller?._id
+    if (callState !== 'idle' && to) {
+      getSocket()?.emit('call:end', { to, chatId })
     }
-    reset()
-  }, [reset])
+    useCallStore.getState().reset()
+  }, [clearDurationTimer])
 
+  // ─── Decline incoming ─────────────────────────────────────────────────────
   const declineCall = useCallback(() => {
-    const socket = getSocket()
     const { caller, chatId } = useCallStore.getState()
-    if (caller?._id) socket?.emit('call:decline', { to: caller._id, chatId })
-    reset()
-  }, [reset])
+    if (caller?._id) getSocket()?.emit('call:decline', { to: caller._id, chatId })
+    useCallStore.getState().reset()
+  }, [])
 
-  // ── Duration timer ────────────────────────────────────────────────────────
-  const startDurationTimer = () => {
-    if (durationRef.current) return
-    durationRef.current = setInterval(() => {
-      useCallStore.getState().incrementDuration()
-    }, 1000)
-  }
-  const clearDurationTimer = () => {
-    if (durationRef.current) {
-      clearInterval(durationRef.current)
-      durationRef.current = null
-    }
-  }
-
-  useEffect(() => () => clearDurationTimer(), [])
-
-  return {
-    startCall,
-    answerCall,
-    handleOffer,
-    handleAnswer,
-    handleIceCandidate,
-    toggleScreenShare,
-    endCall,
-    declineCall,
-    getMedia,
-  }
+  return { startCall, answerCall, handleAnswer, handleIceCandidate, toggleScreenShare, endCall, declineCall }
 }

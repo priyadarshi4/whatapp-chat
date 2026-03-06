@@ -5,7 +5,7 @@ import { useCallStore } from '../../store/callStore'
 import { useWebRTC } from '../../hooks/useWebRTC'
 
 export default function IncomingCallModal() {
-  const { callState, caller, callType } = useCallStore()
+  const { callState, caller, callType, error } = useCallStore()
   const { answerCall, declineCall } = useWebRTC()
   const ringRef = useRef(null)
 
@@ -69,7 +69,7 @@ export default function IncomingCallModal() {
           <img
             src={caller?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(caller?.name || 'U')}&background=2A3942&color=25D366`}
             alt={caller?.name}
-            className="w-20 h-20 rounded-full object-cover relative z-10 border-3 border-primary-500/40"
+            className="w-20 h-20 rounded-full object-cover relative z-10"
           />
         </div>
 
@@ -79,6 +79,10 @@ export default function IncomingCallModal() {
             {callType === 'video' ? <FiVideo size={14} /> : <FiPhone size={14} />}
             Incoming {callType === 'video' ? 'video' : 'voice'} call…
           </p>
+          {/* Error shown inline so user can retry */}
+          {error && (
+            <p className="text-red-400 text-xs mt-2 px-2">{error}</p>
+          )}
         </div>
 
         <div className="flex items-center gap-12">
@@ -95,10 +99,11 @@ export default function IncomingCallModal() {
               className="w-16 h-16 bg-primary-500 hover:bg-primary-600 rounded-full flex items-center justify-center shadow-lg shadow-primary-500/30 transition-colors">
               {callType === 'video' ? <FiVideo size={24} className="text-white" /> : <FiPhone size={24} className="text-white" />}
             </motion.button>
-            <span className="text-white/50 text-xs">Answer</span>
+            <span className="text-white/50 text-xs">{error ? 'Retry' : 'Answer'}</span>
           </div>
         </div>
       </motion.div>
     </motion.div>
   )
 }
+

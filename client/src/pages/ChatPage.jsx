@@ -19,7 +19,7 @@ export default function ChatPage() {
     removeMessage, setTyping, setUserOnline, updateReactions,
     addChat, updateChatLastMessage, incrementUnread,
   } = useChatStore()
-  const { receiveIncomingCall, callState } = useCallStore()
+  const { callState } = useCallStore()
   const { handleAnswer, handleIceCandidate, endCall } = useWebRTC()
 
   const notificationSound = useRef(null)
@@ -103,14 +103,17 @@ export default function ChatPage() {
     socket.on('status:new',        (status) => useStatusStore.getState().addStatusFromSocket(status))
 
     // ── Call signaling ─────────────────────────────────────────────────────
-    socket.on('call:incoming', ({ from, chatId, callType, caller }) => {
+    socket.on('call:incoming', ({ from, chatId, callType, caller, offer }) => {
       if (useCallStore.getState().callState !== 'idle') return
-      receiveIncomingCall({ caller, chatId, callType })
-    })
-
-    // Callee receives offer → store it in Zustand so answerCall can use it
-    socket.on('webrtc:offer', ({ offer }) => {
-      useCallStore.getState().setPendingOffer(offer)
+      // Store offer AND set incoming state atomically in one setState call
+      useCallStore.setState({
+        callState: 'incoming',
+        caller,
+        chatId,
+        callType,
+        pendingOffer: offer,   // offer arrives with the ring — no race condition
+        error: null,
+      })
     })
 
     // Caller receives answer → set remote description
@@ -143,7 +146,6 @@ export default function ChatPage() {
       socket.off('chat:created')
       socket.off('status:new')
       socket.off('call:incoming')
-      socket.off('webrtc:offer')
       socket.off('webrtc:answer')
       socket.off('webrtc:ice-candidate')
       socket.off('call:declined')

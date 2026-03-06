@@ -15,6 +15,7 @@ const messageRoutes = require('./routes/messages');
 const uploadRoutes = require('./routes/uploads');
 const pushRoutes   = require('./routes/push');
 const statusRoutes = require('./routes/status');
+const turnRoutes = require('./routes/turn');
 
 const { initializeSocket } = require('./sockets/socketHandler');
 const { connectDB } = require('./config/database');
@@ -66,6 +67,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/push',   pushRoutes);
 app.use('/api/status', statusRoutes);
+app.use('/api/turn', turnRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

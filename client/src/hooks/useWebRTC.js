@@ -1,35 +1,32 @@
 import { useCallback, useRef, useEffect } from 'react'
 import { useCallStore } from '../store/callStore'
 import { getSocket } from '../socket/socket'
+import api from '../utils/api'
 
 // ─── Module-level singletons ──────────────────────────────────────────────────
-// CRITICAL: These must be outside the hook so every call to useWebRTC()
-// in any component shares the SAME peer connection reference and timer.
-// If they were inside the hook, ChatPage and IncomingCallModal would each
-// get their own pcRef — one creates the PC, the other reads null.
-let _pc = null          // RTCPeerConnection singleton
+let _pc = null
 let _durationTimer = null
 
-const getPC  = ()    => _pc
-const setPC  = (pc)  => { _pc = pc }
-const clearPC = ()   => { _pc = null }
+const getPC   = ()    => _pc
+const setPC   = (pc)  => { _pc = pc }
+const clearPC = ()    => { _pc = null }
 
-// ─── ICE / TURN servers ───────────────────────────────────────────────────────
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
-    // Open Relay free TURN (works cross-network)
-    { urls: 'turn:openrelay.metered.ca:80',                  username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443',                 username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp',   username: 'openrelayproject', credential: 'openrelayproject' },
-  ],
-  iceCandidatePoolSize: 10,
-  bundlePolicy: 'max-bundle',
-  rtcpMuxPolicy: 'require',
+// ─── Fetch ICE/TURN credentials from server ───────────────────────────────────
+// Called fresh before every call so credentials are never expired
+async function fetchIceServers() {
+  try {
+    const { data } = await api.get('/turn/credentials')
+    if (data.warning) console.warn('[TURN]', data.warning)
+    console.log('[TURN] ICE servers:', data.iceServers?.map(s => s.urls).flat())
+    return data.iceServers
+  } catch (err) {
+    console.error('[TURN] Failed to fetch ICE servers, using STUN fallback:', err.message)
+    // Fallback so call can still attempt on same-network
+    return [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+    ]
+  }
 }
 
 // ─── Duration timer (also module-level) ──────────────────────────────────────
@@ -72,11 +69,18 @@ async function flushIceQueue(pc) {
 }
 
 // ─── Create RTCPeerConnection ─────────────────────────────────────────────────
-function createPC(stream) {
+function createPC(stream, iceServers) {
   // Close any existing PC first
   if (_pc) { try { _pc.close() } catch {} }
 
-  const pc = new RTCPeerConnection(ICE_SERVERS)
+  const config = {
+    iceServers,
+    iceCandidatePoolSize: 10,
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require',
+  }
+  console.log('[WebRTC] Creating PC with', iceServers.length, 'ICE servers')
+  const pc = new RTCPeerConnection(config)
   setPC(pc)
   useCallStore.getState().setPeerConnection(pc)
 
@@ -160,8 +164,11 @@ export function useWebRTC() {
     const { callee, chatId, callType } = useCallStore.getState()
     try {
       useCallStore.getState().setConnecting()
-      const stream = await getMedia(callType)
-      const pc = createPC(stream)
+      const [stream, iceServers] = await Promise.all([
+        getMedia(callType),
+        fetchIceServers(),
+      ])
+      const pc = createPC(stream, iceServers)
 
       const offer = await pc.createOffer({
         offerToReceiveAudio: true,
@@ -194,8 +201,11 @@ export function useWebRTC() {
     }
     try {
       useCallStore.getState().setConnecting()
-      const stream = await getMedia(callType)
-      const pc = createPC(stream)  // creates and stores in module _pc
+      const [stream, iceServers] = await Promise.all([
+        getMedia(callType),
+        fetchIceServers(),
+      ])
+      const pc = createPC(stream, iceServers)  // creates and stores in module _pc
 
       console.log('[WebRTC] Setting remote description (offer)')
       await pc.setRemoteDescription(new RTCSessionDescription(pendingOffer))

@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: chatapp-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: chatapp
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - chatapp-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: chatapp-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - chatapp-network
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: chatapp-server
+    restart: unless-stopped
+    env_file:
+      - ./server/.env
+    environment:
+      - MONGODB_URI=mongodb://admin:password@mongo:27017/chatapp?authSource=admin
+      - REDIS_URL=redis://redis:6379
+      - NODE_ENV=production
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mongo
+      - redis
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+    networks:
+      - chatapp-network
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: chatapp-client
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - server
+    networks:
+      - chatapp-network
+
+volumes:
+  mongo_data:
+  redis_data:
+
+networks:
+  chatapp-network:
+    driver: bridge

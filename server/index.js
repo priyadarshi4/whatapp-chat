@@ -28,7 +28,7 @@ const server = http.createServer(app);
 // Socket.IO setup
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: process.env.CLIENT_URL || 'http://localhost:5174',
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -38,7 +38,7 @@ const io = new Server(server, {
 // Middleware
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: process.env.CLIENT_URL || 'http://localhost:5174',
   credentials: true,
 }));
 app.use(express.json({ limit: '50mb' }));

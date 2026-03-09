@@ -10,6 +10,7 @@ import ProfilePanel from './ProfilePanel'
 import NewGroupPanel from './NewGroupPanel'
 import NotificationBell from '../ui/NotificationBell'
 import StatusBar from '../status/StatusBar'
+import StatusUploader from '../status/StatusUploader'
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore()

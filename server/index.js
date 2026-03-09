@@ -1,7 +1,6 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -25,7 +24,13 @@ const { connectDB } = require('./config/database');
 const { connectRedis } = require('./config/redis');
 
 const app = express();
+
+/* IMPORTANT for Render / Vercel */
+app.set('trust proxy', 1);
+
 const server = http.createServer(app);
+
+/* ================= SOCKET.IO ================= */
 
 const io = new Server(server, {
   cors: {
@@ -33,24 +38,57 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
     credentials: true,
   },
+  transports: ['websocket', 'polling'],
   pingTimeout: 60000,
   pingInterval: 25000,
 });
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5174',
-  credentials: true,
-}));
+/* ================= SECURITY ================= */
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
+
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || 'http://localhost:5174',
+    credentials: true,
+  })
+);
+
+/* ================= BODY PARSER ================= */
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+/* ================= LOGGER ================= */
+
 app.use(morgan('dev'));
 
-const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200 });
+/* ================= RATE LIMIT ================= */
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 app.use('/api/', limiter);
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20 });
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 2000,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 app.use('/api/auth', authLimiter, authRoutes);
+
+/* ================= ROUTES ================= */
+
 app.use('/api/users', userRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/messages', messageRoutes);
@@ -62,23 +100,45 @@ app.use('/api/letters', lettersRoutes);
 app.use('/api/memories', memoriesRoutes);
 app.use('/api/couple', coupleRoutes);
 
-app.get('/health', (req, res) => res.json({ status: 'OK', timestamp: new Date().toISOString() }));
+/* ================= HEALTH CHECK ================= */
 
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    server: 'Couple Chat',
+    timestamp: new Date().toISOString(),
+  });
 });
 
+/* ================= ERROR HANDLER ================= */
+
+app.use((err, req, res, next) => {
+  console.error('Server Error:', err);
+
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal Server Error',
+  });
+});
+
+/* ================= SOCKET INIT ================= */
+
 initializeSocket(io);
+
+/* ================= SERVER START ================= */
 
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
+    console.log('Connecting DB...');
     await connectDB();
+
+    console.log('Connecting Redis...');
     await connectRedis();
+
     server.listen(PORT, () => {
       console.log(`🚀 Couple Chat Server running on port ${PORT}`);
+      console.log(`🌍 Client URL: ${process.env.CLIENT_URL}`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);
@@ -87,4 +147,5 @@ async function startServer() {
 }
 
 startServer();
+
 module.exports = { app, io };

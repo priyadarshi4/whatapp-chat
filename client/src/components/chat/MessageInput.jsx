@@ -116,7 +116,7 @@ export default function MessageInput() {
   };
 
   return (
-    <div className="bg-white dark:bg-rose-dark border-t border-pink-100 px-3 py-2">
+    <div className="bg-white dark:bg-rose-dark border-t border-pink-100 dark:border-pink-900/30 flex-shrink-0">
       {/* FEATURE 1: Reply bar */}
       <AnimatePresence>
         {replyingTo && (

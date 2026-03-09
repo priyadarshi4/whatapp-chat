@@ -32,25 +32,25 @@ export default function ChatPage() {
     );
 
   return (
-    <div className="flex flex-col h-[100dvh] overflow-hidden">
+  <div className="flex flex-col h-[100dvh] overflow-hidden">
 
-      {/* HEADER (always visible) */}
-      <div className="sticky top-0 z-20 bg-white dark:bg-rose-dark">
-        <ChatHeader />
-      </div>
-
-      {/* MESSAGES */}
-      <div className="flex-1 overflow-y-auto">
-        <MessageList />
-      </div>
-
-      {/* INPUT */}
-      <div className="sticky bottom-0 z-20 bg-white dark:bg-rose-dark">
-        <MessageInput />
-      </div>
-
+    {/* HEADER */}
+    <div className="flex-shrink-0">
+      <ChatHeader />
     </div>
-  );
+
+    {/* MESSAGE AREA */}
+    <div className="flex-1 overflow-y-auto px-2">
+      <MessageList />
+    </div>
+
+    {/* INPUT */}
+    <div className="flex-shrink-0 bg-white dark:bg-rose-dark border-t border-pink-100">
+      <MessageInput />
+    </div>
+
+  </div>
+);
 }
 
 function ChatSkeleton() {

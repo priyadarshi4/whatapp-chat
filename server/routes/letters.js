@@ -3,6 +3,7 @@ const router = express.Router();
 const auth = require('../middleware/auth');
 const Letter = require('../models/Letter');
 const User = require('../models/User');
+const { sendPushNotification } = require('../utils/webPush');
 
 // GET /api/letters
 router.get('/', auth, async (req, res) => {
@@ -43,6 +44,24 @@ router.post('/', auth, async (req, res) => {
       sentAt: !isDraft ? new Date() : undefined,
     });
     await letter.save();
+
+    // 🔔 Push notification to partner when letter is sent (not draft)
+    if (!isDraft && user.partnerId) {
+      try {
+        const partner = await User.findById(user.partnerId);
+        if (partner?.pushSubscription?.endpoint) {
+          await sendPushNotification(partner.pushSubscription, {
+            title: `💌 Letter from ${user.username}`,
+            body: title ? `"${title}"` : 'You have a new love letter!',
+            icon: '/favicon.svg',
+            data: { url: '/letters' }
+          });
+        }
+      } catch (pushErr) {
+        console.log('Letter push error:', pushErr.message);
+      }
+    }
+
     res.status(201).json({ letter });
   } catch (err) {
     res.status(500).json({ error: err.message });

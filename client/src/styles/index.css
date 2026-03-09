@@ -157,3 +157,21 @@
   to { opacity: 1; transform: scale(1); }
 }
 .tick-reveal { animation: tickReveal 0.3s ease-out; }
+
+/* ===== KEYBOARD FIX ===== */
+/* Prevent bottom nav from going under keyboard on Android */
+@supports (height: 100dvh) {
+  #root {
+    height: 100dvh;
+  }
+}
+
+/* Bottom nav always above keyboard */
+.bottom-nav-container {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* When keyboard is open, chat input should stay above it */
+.chat-input-container {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

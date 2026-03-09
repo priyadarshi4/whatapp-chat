@@ -3,6 +3,7 @@ const router = express.Router();
 const auth = require('../middleware/auth');
 const Status = require('../models/Status');
 const User = require('../models/User');
+const { sendPushNotification } = require('../utils/webPush');
 
 router.get('/', auth, async (req, res) => {
   try {
@@ -26,6 +27,26 @@ router.post('/', auth, async (req, res) => {
     });
     await status.save();
     await status.populate('userId', 'username avatar');
+
+    // 🔔 Push notification to partner for new moment
+    try {
+      const user = await User.findById(req.userId);
+      if (user?.partnerId) {
+        const partner = await User.findById(user.partnerId);
+        if (partner?.pushSubscription?.endpoint) {
+          const isPhoto = type === 'image' || type === 'video' || (mediaItems && mediaItems.length > 0);
+          await sendPushNotification(partner.pushSubscription, {
+            title: `🌸 ${user.username} shared a moment`,
+            body: content || (isPhoto ? 'Shared a photo with you 📷' : 'Posted a new moment'),
+            icon: '/favicon.svg',
+            data: { url: '/moments' }
+          });
+        }
+      }
+    } catch (pushErr) {
+      console.log('Moment push error:', pushErr.message);
+    }
+
     res.status(201).json({ status });
   } catch (err) {
     res.status(500).json({ error: err.message });

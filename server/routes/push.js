@@ -1,15 +1,32 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const auth = require('../middleware/auth');
 
-router.post('/subscribe', async (req, res) => {
-  const { userId, subscription } = req.body;
+// GET /api/push/vapid — return public key to client
+router.get('/vapid', (req, res) => {
+  res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || '' });
+});
 
-  await User.findByIdAndUpdate(userId, {
-    pushSubscription: subscription,
-  });
+// POST /api/push/subscribe — save push subscription for user
+router.post('/subscribe', auth, async (req, res) => {
+  try {
+    const { subscription } = req.body;
+    await User.findByIdAndUpdate(req.userId, { pushSubscription: subscription });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-  res.json({ success: true });
+// DELETE /api/push/unsubscribe
+router.delete('/unsubscribe', auth, async (req, res) => {
+  try {
+    await User.findByIdAndUpdate(req.userId, { pushSubscription: null });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

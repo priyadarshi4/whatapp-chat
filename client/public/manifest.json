@@ -1,0 +1,14 @@
+{
+  "name": "Us 💕",
+  "short_name": "Us",
+  "description": "Our private couple app",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFF1F5",
+  "theme_color": "#FF4F8B",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -30,7 +30,7 @@ const useAuthStore = create((set, get) => ({
       initSocket(token)
 
       // register push notifications
-      registerPush(data.user._id)
+      registerPush()
 
       // load partner
       const p = await api.get('/users/partner')
@@ -59,7 +59,7 @@ const useAuthStore = create((set, get) => ({
     initSocket(data.token)
 
     // register push
-    registerPush(data.user._id)
+    registerPush()
 
     const p = await api.get('/users/partner')
     set({ partner: p.data.partner })
@@ -83,7 +83,7 @@ const useAuthStore = create((set, get) => ({
 
     initSocket(data.token)
 
-    registerPush(data.user._id)
+    registerPush()
 
     return data
   },

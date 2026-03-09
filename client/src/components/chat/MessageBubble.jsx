@@ -114,7 +114,8 @@ const MessageBubble = memo(({ message, isMine, showAvatar, onScrollToMessage }) 
   const isMissYou = message.type === 'miss_you';
   const isGoodMorning = message.type === 'good_morning';
   const isGoodNight = message.type === 'good_night';
-  const deliveryStatus = message.deliveryStatus || (message.isRead ? 'read' : 'sent');
+  // Only show blue ticks if server explicitly set deliveryStatus='read'
+  const deliveryStatus = message.deliveryStatus || 'sent';
 
   const reactionCounts = {};
   (message.reactions || []).forEach(r => {

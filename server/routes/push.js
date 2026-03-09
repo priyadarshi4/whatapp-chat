@@ -1,2 +1,15 @@
 const express = require('express');
-module.exports = express.Router().get('/vapid', (_, res) => res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || '' }));
+const router = express.Router();
+const User = require('../models/User');
+
+router.post('/subscribe', async (req, res) => {
+  const { userId, subscription } = req.body;
+
+  await User.findByIdAndUpdate(userId, {
+    pushSubscription: subscription,
+  });
+
+  res.json({ success: true });
+});
+
+module.exports = router;

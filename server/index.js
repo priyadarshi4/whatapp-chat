@@ -22,7 +22,7 @@ const coupleRoutes = require('./routes/couple');
 const { initializeSocket } = require('./sockets/socketHandler');
 const { connectDB } = require('./config/database');
 const { connectRedis } = require('./config/redis');
-
+const { initWebPush } = require('./utils/webPush');
 const app = express();
 
 /* IMPORTANT for Render / Vercel */
@@ -135,7 +135,7 @@ async function startServer() {
 
     console.log('Connecting Redis...');
     await connectRedis();
-
+    initWebPush();
     server.listen(PORT, () => {
       console.log(`🚀 Couple Chat Server running on port ${PORT}`);
       console.log(`🌍 Client URL: ${process.env.CLIENT_URL}`);

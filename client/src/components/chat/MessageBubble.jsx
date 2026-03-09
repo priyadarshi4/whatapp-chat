@@ -1,282 +1,296 @@
-import React, { useState, useRef } from 'react'
-import { format } from 'date-fns'
-import { FiCheck, FiMoreVertical, FiCornerUpLeft, FiEdit2, FiTrash2, FiStar, FiShare2 } from 'react-icons/fi'
-import { motion, AnimatePresence } from 'framer-motion'
-import { useAuthStore } from '../../store/authStore'
-import { useChatStore } from '../../store/chatStore'
-import { getSocket } from '../../socket/socket'
-import api from '../../utils/api'
-import toast from 'react-hot-toast'
+import React, { useState, useRef, useCallback, memo } from 'react';
+import { motion, AnimatePresence, useMotionValue, useTransform, useAnimation } from 'framer-motion';
+import { getSocket } from '../../utils/socket';
+import useChatStore from '../../store/chatStore';
 
-const REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '👍']
+const REACTION_EMOJIS = ['❤️', '😘', '🥰', '💕', '😍', '🌸'];
 
-function MessageStatus({ message, isOwn }) {
-  if (!isOwn) return null
-  const hasSeen = message.seenBy?.length > 0
-  const hasDelivered = message.deliveredTo?.length > 1
+// FEATURE 6: WhatsApp-style delivery tick SVGs
+function DeliveryTick({ status, isMine }) {
+  if (!isMine) return null;
+  if (status === 'sending') {
+    return <span className="text-[10px] opacity-40 ml-0.5">⏳</span>;
+  }
+  if (status === 'sent') {
+    return (
+      <svg className="inline-block ml-0.5 opacity-60" width="14" height="10" viewBox="0 0 16 11" fill="white">
+        <path d="M1 6L5 10L15 1" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    );
+  }
+  if (status === 'delivered') {
+    return (
+      <svg className="inline-block ml-0.5 opacity-60" width="18" height="10" viewBox="0 0 20 11" fill="none">
+        <path d="M1 6L5 10L15 1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M6 6L10 10L20 1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    );
+  }
+  if (status === 'read') {
+    return (
+      <svg className="inline-block ml-0.5" width="18" height="10" viewBox="0 0 20 11" fill="none">
+        <path d="M1 6L5 10L15 1" stroke="#60a5fa" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M6 6L10 10L20 1" stroke="#60a5fa" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    );
+  }
+  return null;
+}
+
+// FEATURE 1: Reply preview inside bubble
+function ReplyPreview({ replyTo, isMine, onScrollTo }) {
+  if (!replyTo) return null;
+  const isImage = replyTo.type === 'image';
+  const label = replyTo.senderId?.username || 'Unknown';
 
   return (
-    <span className="inline-flex items-center ml-1">
-      {hasSeen ? (
-        <span className="text-blue-400 text-xs">✓✓</span>
-      ) : hasDelivered ? (
-        <span className="text-chat-textSecondary text-xs">✓✓</span>
+    <button
+      onClick={(e) => { e.stopPropagation(); onScrollTo?.(replyTo._id); }}
+      className={`w-full text-left rounded-lg px-2 py-1.5 mb-1.5 border-l-2 ${
+        isMine
+          ? 'bg-white/20 border-white/60'
+          : 'bg-black/5 dark:bg-white/10 border-pink-400'
+      }`}
+    >
+      <div className={`text-[10px] font-semibold mb-0.5 ${isMine ? 'text-white/80' : 'text-pink-500'}`}>
+        {label}
+      </div>
+      {isImage ? (
+        <div className="text-[11px] opacity-70 flex items-center gap-1">
+          <span>📷</span> Photo
+        </div>
       ) : (
-        <span className="text-chat-textSecondary text-xs">✓</span>
+        <div className={`text-[11px] truncate max-w-[200px] ${isMine ? 'text-white/70' : 'text-gray-500 dark:text-pink-200'}`}>
+          {replyTo.content || 'Message'}
+        </div>
       )}
-    </span>
-  )
+    </button>
+  );
 }
 
-function MediaContent({ message }) {
-  if (message.messageType === 'image') {
-    return (
-      <img
-        src={message.mediaUrl}
-        alt="Image"
-        className="max-w-xs rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-        onClick={() => window.open(message.mediaUrl, '_blank')}
-      />
-    )
-  }
-  if (message.messageType === 'video') {
-    return (
-      <video
-        src={message.mediaUrl}
-        controls
-        className="max-w-xs rounded-lg"
-        style={{ maxHeight: 300 }}
-      />
-    )
-  }
-  if (message.messageType === 'audio') {
-    return (
-      <div className="flex items-center gap-3 min-w-[200px]">
-        <div className="w-8 h-8 bg-primary-500 rounded-full flex items-center justify-center flex-shrink-0">
-          🎙️
-        </div>
-        <audio src={message.mediaUrl} controls className="flex-1 h-8" style={{ minWidth: 150 }} />
-      </div>
-    )
-  }
-  if (message.messageType === 'document') {
-    return (
-      <a href={message.mediaUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-2 bg-black bg-opacity-20 rounded-lg hover:bg-opacity-30 transition-colors">
-        <span className="text-2xl">📄</span>
-        <div>
-          <p className="text-chat-text text-sm font-medium truncate max-w-[200px]">{message.mediaName || 'Document'}</p>
-          <p className="text-chat-textSecondary text-xs">{message.mediaSize ? `${(message.mediaSize / 1024).toFixed(1)} KB` : ''}</p>
-        </div>
-      </a>
-    )
-  }
-  return null
-}
+const MessageBubble = memo(({ message, isMine, showAvatar, onScrollToMessage }) => {
+  const [showReactions, setShowReactions] = useState(false);
+  const [fullscreenImg, setFullscreenImg] = useState(null);
+  const { chat, setReplyingTo } = useChatStore();
 
-export default function MessageBubble({ message, isOwn }) {
-  const { user } = useAuthStore()
-  const { activeChat, updateMessage, removeMessage } = useChatStore()
-  const [showMenu, setShowMenu] = useState(false)
-  const [showReactions, setShowReactions] = useState(false)
-  const [isEditing, setIsEditing] = useState(false)
-  const [editText, setEditText] = useState(message.message)
-  const menuRef = useRef()
+  // FEATURE 1: Swipe to reply
+  const x = useMotionValue(0);
+  const replyOpacity = useTransform(x, isMine ? [-60, -20] : [20, 60], [1, 0]);
+  const replyScale = useTransform(x, isMine ? [-60, -20] : [20, 60], [1, 0.5]);
+  const dragControls = useAnimation();
+  const hasTriggeredReply = useRef(false);
 
-  if (message.messageType === 'system') {
-    return (
-      <div className="flex justify-center my-2">
-        <span className="text-chat-textSecondary text-xs bg-chat-panel px-3 py-1 rounded-full">
-          {message.message}
-        </span>
-      </div>
-    )
-  }
-
-  if (message.deletedForEveryone) {
-    return (
-      <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-1`}>
-        <div className={`${isOwn ? 'message-bubble-out' : 'message-bubble-in'} text-chat-textSecondary italic text-sm`}>
-          🚫 This message was deleted
-        </div>
-      </div>
-    )
-  }
-
-  const socket = getSocket()
-
-  const handleReact = async (emoji) => {
-    setShowReactions(false)
-    socket?.emit('message:react', { messageId: message._id, emoji, chatId: activeChat._id })
-  }
-
-  const handleEdit = async () => {
-    if (!editText.trim() || editText === message.message) { setIsEditing(false); return }
-    socket?.emit('message:edit', { messageId: message._id, message: editText, chatId: activeChat._id })
-    updateMessage(message._id, { message: editText, isEdited: true })
-    setIsEditing(false)
-  }
-
-  const handleDelete = async (forEveryone) => {
-    setShowMenu(false)
-    socket?.emit('message:delete', { messageId: message._id, chatId: activeChat._id, deleteForEveryone: forEveryone })
-    if (forEveryone) {
-      updateMessage(message._id, { deletedForEveryone: true, message: 'This message was deleted' })
-    } else {
-      removeMessage(message._id, false, user._id)
+  const handleDragEnd = useCallback((_, info) => {
+    const threshold = 55;
+    const shouldReply = isMine ? info.offset.x < -threshold : info.offset.x > threshold;
+    if (shouldReply && !hasTriggeredReply.current) {
+      hasTriggeredReply.current = true;
+      setReplyingTo(message);
+      if (navigator.vibrate) navigator.vibrate(30);
     }
-  }
+    hasTriggeredReply.current = false;
+    dragControls.start({ x: 0, transition: { type: 'spring', stiffness: 400, damping: 30 } });
+  }, [isMine, message, setReplyingTo]);
 
-  const handleStar = async () => {
-    try {
-      await api.post(`/users/star-message/${message._id}`)
-      toast.success('Message starred')
-    } catch { toast.error('Failed to star') }
-    setShowMenu(false)
-  }
+  const handleReact = (emoji) => {
+    const socket = getSocket();
+    if (socket) socket.emit('message:react', { messageId: message._id, emoji, chatId: chat?._id });
+    setShowReactions(false);
+  };
 
-  const groupedReactions = message.reactions?.reduce((acc, r) => {
-    if (!acc[r.emoji]) acc[r.emoji] = 0
-    acc[r.emoji] += r.users?.length || 0
-    return acc
-  }, {}) || {}
+  const handlePin = () => {
+    const socket = getSocket();
+    if (socket) socket.emit('message:pin', { messageId: message._id, chatId: chat?._id });
+    setShowReactions(false);
+  };
+
+  const handleReply = () => {
+    setReplyingTo(message);
+    setShowReactions(false);
+  };
+
+  const isDeleted = message.isDeleted;
+  const isTimeCapsule = (message.type === 'time_capsule' || message.type === 'surprise') && !message.isUnlocked;
+  const isMissYou = message.type === 'miss_you';
+  const isGoodMorning = message.type === 'good_morning';
+  const isGoodNight = message.type === 'good_night';
+  const deliveryStatus = message.deliveryStatus || (message.isRead ? 'read' : 'sent');
+
+  const reactionCounts = {};
+  (message.reactions || []).forEach(r => {
+    reactionCounts[r.emoji] = (reactionCounts[r.emoji] || 0) + 1;
+  });
 
   return (
-    <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-1 group relative`}>
-      {/* Group avatar for incoming */}
-      {!isOwn && activeChat?.isGroup && (
-        <img
-          src={message.senderId?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(message.senderId?.name || 'U')}&background=2A3942&color=25D366`}
-          alt={message.senderId?.name}
-          className="avatar w-7 h-7 mr-2 self-end mb-1 flex-shrink-0"
-        />
-      )}
-
-      <div className={`relative max-w-xs lg:max-w-md xl:max-w-lg`}>
-        {/* Reply preview */}
-        {message.replyTo && (
-          <div className={`${isOwn ? 'bg-black bg-opacity-20' : 'bg-black bg-opacity-20'} rounded-t-lg px-3 py-2 border-l-2 border-primary-500 mb-0`}>
-            <p className="text-primary-500 text-xs font-medium">{message.replyTo.senderId?.name}</p>
-            <p className="text-chat-textSecondary text-xs truncate">{message.replyTo.message || '📎 Media'}</p>
-          </div>
-        )}
-
-        {/* Forward indicator */}
-        {message.forwardedFrom && (
-          <div className="text-chat-textSecondary text-xs flex items-center gap-1 mb-1 px-1">
-            <FiShare2 size={10} /> Forwarded
-          </div>
-        )}
-
-        {/* Bubble */}
-        <div
-          className={`${isOwn ? 'message-bubble-out' : 'message-bubble-in'} ${message.replyTo ? 'rounded-tl-none rounded-tr-none rounded-bl-lg rounded-br-lg' : ''}`}
-          onMouseEnter={() => {}}
+    <>
+      <div className={`flex ${isMine ? 'justify-end' : 'justify-start'} mb-1 relative px-1`}>
+        {/* Swipe reply indicator - shows on opposite side */}
+        <motion.div
+          style={{ opacity: replyOpacity, scale: replyScale }}
+          className={`absolute top-1/2 -translate-y-1/2 text-pink-400 ${isMine ? 'left-2' : 'right-2'} pointer-events-none`}
         >
-          {/* Group sender name */}
-          {!isOwn && activeChat?.isGroup && (
-            <p className="text-primary-500 text-xs font-medium mb-1">{message.senderId?.name}</p>
-          )}
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className={isMine ? '' : 'scale-x-[-1]'}>
+            <path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/>
+          </svg>
+        </motion.div>
 
-          {/* Media */}
-          {message.mediaUrl && <div className="mb-1"><MediaContent message={message} /></div>}
-
-          {/* Text */}
-          {isEditing ? (
-            <div className="flex items-center gap-2">
-              <input
-                value={editText}
-                onChange={e => setEditText(e.target.value)}
-                className="flex-1 bg-transparent outline-none border-b border-primary-500 text-chat-text text-sm"
-                autoFocus
-                onKeyDown={e => { if (e.key === 'Enter') handleEdit(); if (e.key === 'Escape') setIsEditing(false) }}
-              />
-              <button onClick={handleEdit} className="text-primary-500 text-xs">✓</button>
-            </div>
-          ) : (
-            message.message && (
-              <p className="text-sm leading-relaxed break-words">
-                {message.message}
-                {message.isEdited && <span className="text-chat-textSecondary text-xs ml-1">(edited)</span>}
-              </p>
-            )
-          )}
-
-          {/* Time & status */}
-          <div className={`flex items-center gap-1 mt-1 ${isOwn ? 'justify-end' : 'justify-start'}`}>
-            <span className="text-chat-textSecondary text-xs">
-              {message.createdAt ? format(new Date(message.createdAt), 'HH:mm') : ''}
-            </span>
-            <MessageStatus message={message} isOwn={isOwn} />
-          </div>
-        </div>
-
-        {/* Reactions display */}
-        {Object.keys(groupedReactions).length > 0 && (
-          <div className={`flex flex-wrap gap-1 mt-1 ${isOwn ? 'justify-end' : 'justify-start'}`}>
-            {Object.entries(groupedReactions).map(([emoji, count]) => (
-              <button
-                key={emoji}
-                onClick={() => handleReact(emoji)}
-                className="flex items-center gap-0.5 bg-chat-panel rounded-full px-2 py-0.5 text-xs hover:bg-chat-hover transition-colors"
-              >
-                {emoji} <span className="text-chat-textSecondary">{count}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Context menu button */}
-      <div className={`flex items-center ${isOwn ? 'order-first mr-1' : 'ml-1'} opacity-0 group-hover:opacity-100 transition-opacity self-center`}>
-        <button
-          onClick={() => setShowMenu(!showMenu)}
-          className="icon-btn text-chat-textSecondary p-1"
+        <motion.div
+          drag="x"
+          dragDirectionLock
+          dragConstraints={{ left: isMine ? -80 : 0, right: isMine ? 0 : 80 }}
+          dragElastic={0.3}
+          onDragEnd={handleDragEnd}
+          animate={dragControls}
+          style={{ x }}
+          className={`flex flex-col ${isMine ? 'items-end' : 'items-start'} max-w-[80%]`}
+          onContextMenu={(e) => { e.preventDefault(); setShowReactions(s => !s); }}
         >
-          <FiMoreVertical size={16} />
-        </button>
-      </div>
+          {/* Special decorators */}
+          {isMissYou && <div className="text-xs text-pink-400 mb-1 font-medium">💕 Sent with love</div>}
+          {isGoodMorning && <div className="text-xs text-amber-400 mb-1">☀️ Good Morning!</div>}
+          {isGoodNight && <div className="text-xs text-indigo-400 mb-1">🌙 Good Night!</div>}
+          {message.isPinned && <div className="text-[10px] text-pink-400 mb-0.5">📌 Pinned</div>}
 
-      {/* Context menu */}
-      <AnimatePresence>
-        {showMenu && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className={`absolute ${isOwn ? 'right-8' : 'left-8'} top-0 z-50 bg-chat-panel border border-chat-border rounded-lg shadow-xl min-w-[160px] overflow-hidden`}
-            ref={menuRef}
+          {/* Bubble */}
+          <div
+            className={`relative cursor-pointer select-none ${isMine ? 'bubble-mine' : 'bubble-theirs'}`}
+            onClick={() => setShowReactions(s => !s)}
           >
-            {/* Reactions */}
-            <div className="flex gap-1 px-3 py-2 border-b border-chat-border">
-              {REACTIONS.map(emoji => (
-                <button key={emoji} onClick={() => handleReact(emoji)} className="text-lg hover:scale-125 transition-transform">
-                  {emoji}
+            {/* FEATURE 1: Reply preview inside bubble */}
+            {message.replyTo && (
+              <ReplyPreview
+                replyTo={message.replyTo}
+                isMine={isMine}
+                onScrollTo={onScrollToMessage}
+              />
+            )}
+
+            {isDeleted ? (
+              <span className="italic opacity-50 text-xs">Message deleted</span>
+            ) : isTimeCapsule ? (
+              <TimeCapsuleBubble message={message} />
+            ) : message.type === 'image' && message.mediaUrl ? (
+              <ImageBubble url={message.mediaUrl} onFullscreen={setFullscreenImg} />
+            ) : message.type === 'song' && message.songData ? (
+              <SongBubble song={message.songData} content={message.content} />
+            ) : (
+              <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{message.content}</p>
+            )}
+
+            {/* Time + delivery ticks */}
+            <div className={`flex items-center gap-1 mt-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
+              <span className={`text-[10px] ${isMine ? 'text-white/60' : 'text-gray-400'}`}>
+                {formatTime(message.createdAt)}
+              </span>
+              {/* FEATURE 6: Delivery status ticks */}
+              <DeliveryTick status={deliveryStatus} isMine={isMine} />
+            </div>
+          </div>
+
+          {/* Reactions display */}
+          {Object.keys(reactionCounts).length > 0 && (
+            <div className="flex gap-1 mt-1 flex-wrap">
+              {Object.entries(reactionCounts).map(([emoji, count]) => (
+                <button key={emoji} onClick={() => handleReact(emoji)}
+                  className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs bg-white dark:bg-rose-mid border border-pink-100 dark:border-pink-900 shadow-sm">
+                  <span>{emoji}</span>
+                  {count > 1 && <span className="text-gray-500 text-[10px]">{count}</span>}
                 </button>
               ))}
             </div>
+          )}
 
-            {[
-              { icon: <FiCornerUpLeft size={14} />, label: 'Reply', action: () => setShowMenu(false) },
-              { icon: <FiStar size={14} />, label: 'Star', action: handleStar },
-              ...(isOwn && message.messageType === 'text' ? [
-                { icon: <FiEdit2 size={14} />, label: 'Edit', action: () => { setIsEditing(true); setShowMenu(false) } },
-              ] : []),
-              ...(isOwn ? [
-                { icon: <FiTrash2 size={14} />, label: 'Delete for everyone', action: () => handleDelete(true), danger: true },
-              ] : []),
-              { icon: <FiTrash2 size={14} />, label: 'Delete for me', action: () => handleDelete(false), danger: true },
-            ].map(item => (
-              <button
-                key={item.label}
-                onClick={item.action}
-                className={`w-full flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-chat-hover transition-colors ${item.danger ? 'text-red-400' : 'text-chat-text'}`}
+          {/* Reaction picker + actions */}
+          <AnimatePresence>
+            {showReactions && (
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0, y: 4 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.8, opacity: 0 }}
+                className={`absolute ${isMine ? 'right-0' : 'left-0'} -top-14 z-20 flex gap-1 bg-white dark:bg-rose-mid rounded-full px-3 py-2 shadow-xl border border-pink-100`}
+                onClick={e => e.stopPropagation()}
               >
-                {item.icon} {item.label}
-              </button>
-            ))}
+                {REACTION_EMOJIS.map((emoji) => (
+                  <button key={emoji} onClick={() => handleReact(emoji)}
+                    className="text-xl active:scale-90 transition-transform">{emoji}</button>
+                ))}
+                <div className="w-px bg-pink-100 mx-0.5" />
+                <button onClick={handleReply} className="text-sm text-pink-400 px-1" title="Reply">↩</button>
+                <button onClick={handlePin} className="text-sm text-gray-400 px-1" title="Pin">📌</button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      </div>
+
+      {/* FEATURE 2: Full-screen image preview */}
+      <AnimatePresence>
+        {fullscreenImg && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black flex items-center justify-center"
+            onClick={() => setFullscreenImg(null)}
+          >
+            <motion.img
+              src={fullscreenImg}
+              initial={{ scale: 0.9 }} animate={{ scale: 1 }} exit={{ scale: 0.9 }}
+              className="max-w-full max-h-full object-contain"
+              onClick={e => e.stopPropagation()}
+            />
+            <button className="absolute top-4 right-4 text-white text-3xl leading-none"
+              onClick={() => setFullscreenImg(null)}>×</button>
           </motion.div>
         )}
       </AnimatePresence>
+    </>
+  );
+});
+
+// FEATURE 2: Image bubble with tap-to-fullscreen
+const ImageBubble = memo(({ url, onFullscreen }) => (
+  <div
+    className="rounded-xl overflow-hidden cursor-pointer"
+    style={{ maxWidth: '220px', minWidth: '120px' }}
+    onClick={(e) => { e.stopPropagation(); onFullscreen(url); }}
+  >
+    <img src={url} alt="shared" className="w-full object-cover block" loading="lazy"
+      style={{ maxHeight: '280px', objectFit: 'cover' }} />
+    <div className="absolute inset-0 bg-transparent hover:bg-black/5 transition-colors rounded-xl" />
+  </div>
+));
+
+const SongBubble = memo(({ song, content }) => (
+  <div className="flex items-center gap-3" style={{ minWidth: '180px' }}>
+    <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-pink-200 flex items-center justify-center text-xl">
+      {song.thumbnail
+        ? <img src={song.thumbnail} className="w-full h-full object-cover" alt="" />
+        : '🎵'}
     </div>
-  )
+    <div className="flex-1 min-w-0">
+      <div className="text-sm font-medium truncate">{song.title || 'Song'}</div>
+      {song.artist && <div className="text-xs opacity-70 truncate">{song.artist}</div>}
+      {content && <div className="text-xs mt-0.5 opacity-80">{content}</div>}
+    </div>
+    {song.url && (
+      <a href={song.url} target="_blank" rel="noopener noreferrer"
+        onClick={e => e.stopPropagation()} className="flex-shrink-0 text-base">🎧</a>
+    )}
+  </div>
+));
+
+const TimeCapsuleBubble = memo(({ message }) => (
+  <div className="text-center py-2 px-1">
+    <div className="text-2xl mb-1">🔒</div>
+    <div className="text-sm font-medium">Surprise!</div>
+    <div className="text-xs opacity-70 mt-0.5">
+      Opens {message.unlockAt ? new Date(message.unlockAt).toLocaleDateString() : 'soon'}
+    </div>
+  </div>
+));
+
+function formatTime(dateStr) {
+  if (!dateStr) return '';
+  return new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 }
+
+export default MessageBubble;

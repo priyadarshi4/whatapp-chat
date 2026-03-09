@@ -1,314 +1,314 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react'
-import { FiSend, FiPaperclip, FiSmile, FiMic, FiX, FiSquare } from 'react-icons/fi'
-import { motion, AnimatePresence } from 'framer-motion'
-import EmojiPicker from 'emoji-picker-react'
-import { useAuthStore } from '../../store/authStore'
-import { useChatStore } from '../../store/chatStore'
-import { getSocket } from '../../socket/socket'
-import api from '../../utils/api'
-import toast from 'react-hot-toast'
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import useChatStore from '../../store/chatStore';
+import { getSocket } from '../../utils/socket';
+import api from '../../utils/api';
 
 export default function MessageInput() {
-  const { user } = useAuthStore()
-  const { activeChat, addMessage } = useChatStore()
-  const [text, setText] = useState('')
-  const [showEmoji, setShowEmoji] = useState(false)
-  const [isUploading, setIsUploading] = useState(false)
-  const [isRecording, setIsRecording] = useState(false)
-  const [recordingTime, setRecordingTime] = useState(0)
-  const [mediaPreview, setMediaPreview] = useState(null) // {file, type, url}
+  const [text, setText] = useState('');
+  const [showExtras, setShowExtras] = useState(false);
+  const [showSurprise, setShowSurprise] = useState(false);
+  const [surpriseTime, setSurpriseTime] = useState('');
+  const [showSong, setShowSong] = useState(false);
+  const [songUrl, setSongUrl] = useState('');
+  const [songTitle, setSongTitle] = useState('');
+  const [uploading, setUploading] = useState(false);
+  // FEATURE 2: Image preview before sending
+  const [imagePreview, setImagePreview] = useState(null); // { dataUrl, file }
+  const inputRef = useRef(null);
+  const typingTimeout = useRef(null);
+  const fileRef = useRef(null);
+  const { sendMessage, chat, replyingTo, clearReplyingTo } = useChatStore();
 
-  const inputRef = useRef()
-  const fileRef = useRef()
-  const mediaRecorderRef = useRef()
-  const chunksRef = useRef([])
-  const typingTimerRef = useRef()
-  const recordingTimerRef = useRef()
+  const emitTyping = useCallback((isTyping) => {
+    const socket = getSocket();
+    if (socket && chat?._id) {
+      socket.emit(isTyping ? 'typing:start' : 'typing:stop', { chatId: chat._id });
+    }
+  }, [chat?._id]);
 
-  const socket = getSocket()
-
-  const handleTyping = useCallback(() => {
-    if (!activeChat) return
-    socket?.emit('typing:start', { chatId: activeChat._id })
-    clearTimeout(typingTimerRef.current)
-    typingTimerRef.current = setTimeout(() => {
-      socket?.emit('typing:stop', { chatId: activeChat._id })
-    }, 2000)
-  }, [activeChat, socket])
-
+  // Auto-focus when replying
   useEffect(() => {
-    return () => {
-      clearTimeout(typingTimerRef.current)
-      clearInterval(recordingTimerRef.current)
+    if (replyingTo) inputRef.current?.focus();
+  }, [replyingTo]);
+
+  const handleChange = (e) => {
+    setText(e.target.value);
+    // Auto-resize textarea
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 96) + 'px';
+    emitTyping(true);
+    clearTimeout(typingTimeout.current);
+    typingTimeout.current = setTimeout(() => emitTyping(false), 1500);
+  };
+
+  const handleSend = async () => {
+    const trimmed = text.trim();
+    if (!trimmed && !imagePreview) return;
+
+    // If there's an image preview pending, send it first
+    if (imagePreview) {
+      await sendImageFile(imagePreview.dataUrl, trimmed);
+      return;
     }
-  }, [])
 
-  const sendMessage = async (overrideText, messageType = 'text', mediaFile = null) => {
-    const content = overrideText ?? text
-    if (!content.trim() && !mediaFile) return
-    if (!activeChat) return
+    setText('');
+    if (inputRef.current) { inputRef.current.style.height = 'auto'; }
+    emitTyping(false);
+    await sendMessage(trimmed, 'text');
+    inputRef.current?.focus();
+  };
 
-    const tempId = Date.now().toString()
-    setText('')
-    setShowEmoji(false)
-    setMediaPreview(null)
-    socket?.emit('typing:stop', { chatId: activeChat._id })
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (e.key === 'Escape' && replyingTo) clearReplyingTo();
+  };
 
+  // FEATURE 2: Image file selected → show preview
+  const handleImageSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setImagePreview({ dataUrl: ev.target.result, file });
+    };
+    reader.readAsDataURL(file);
+    // Reset file input so same file can be selected again
+    e.target.value = '';
+  };
+
+  // FEATURE 2: Upload and send the image
+  const sendImageFile = async (dataUrl, caption = '') => {
+    setUploading(true);
     try {
-      if (mediaFile) {
-        setIsUploading(true)
-        const formData = new FormData()
-        formData.append('file', mediaFile)
-        formData.append('chatId', activeChat._id)
-        formData.append('messageType', messageType)
-        if (content) formData.append('message', content)
-
-        const { data } = await api.post('/messages', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
-        addMessage(data.message)
-        // Emit to socket so others get it
-        socket?.emit('message:send', {
-          chatId: activeChat._id,
-          messageType,
-          tempId,
-          existingMessageId: data.message._id,
-        })
-        setIsUploading(false)
-      } else {
-        // Optimistic UI
-        const optimisticMsg = {
-          _id: tempId,
-          chatId: activeChat._id,
-          senderId: { _id: user._id, name: user.name, avatar: user.avatar },
-          message: content,
-          messageType: 'text',
-          createdAt: new Date().toISOString(),
-          seenBy: [],
-          deliveredTo: [],
-          reactions: [],
-        }
-        addMessage(optimisticMsg)
-
-        socket?.emit('message:send', {
-          chatId: activeChat._id,
-          message: content,
-          messageType: 'text',
-          tempId,
-        })
-      }
+      const { data } = await api.post('/upload', { data: dataUrl, type: 'image' });
+      await sendMessage(caption, 'image', { mediaUrl: data.url });
+      setImagePreview(null);
+      setText('');
     } catch (err) {
-      toast.error('Failed to send message')
-      setIsUploading(false)
+      console.error('Image upload failed:', err);
+    } finally {
+      setUploading(false);
     }
-  }
+  };
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0]
-    if (!file) return
+  const handleCancelImage = () => {
+    setImagePreview(null);
+  };
 
-    const type = file.type.startsWith('image/') ? 'image'
-      : file.type.startsWith('video/') ? 'video'
-      : file.type.startsWith('audio/') ? 'audio'
-      : 'document'
+  const handleGoodMorning = () => { sendMessage('Good Morning ☀️ Hope your day is as beautiful as you are! 🌸', 'good_morning'); setShowExtras(false); };
+  const handleGoodNight = () => { sendMessage('Good Night 🌙 Sweet dreams my love 💕', 'good_night'); setShowExtras(false); };
+  const handleMissYou = () => { sendMessage('I miss you so much 💕', 'miss_you'); setShowExtras(false); };
 
-    const url = URL.createObjectURL(file)
-    setMediaPreview({ file, type, url, name: file.name })
-    e.target.value = ''
-  }
+  const handleSendSong = () => {
+    if (!songUrl) return;
+    sendMessage(songTitle || 'Listen to this 🎵', 'song', { songData: { url: songUrl, title: songTitle || songUrl } });
+    setSongUrl(''); setSongTitle(''); setShowSong(false);
+  };
 
-  const sendMedia = () => {
-    if (!mediaPreview) return
-    sendMessage(text, mediaPreview.type, mediaPreview.file)
-  }
-
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mediaRecorder = new MediaRecorder(stream)
-      mediaRecorderRef.current = mediaRecorder
-      chunksRef.current = []
-
-      mediaRecorder.ondataavailable = (e) => chunksRef.current.push(e.data)
-      mediaRecorder.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        const file = new File([blob], 'voice-note.webm', { type: 'audio/webm' })
-        stream.getTracks().forEach(t => t.stop())
-        setIsRecording(false)
-        setRecordingTime(0)
-        clearInterval(recordingTimerRef.current)
-        await sendMessage('', 'audio', file)
-      }
-
-      mediaRecorder.start()
-      setIsRecording(true)
-      recordingTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000)
-    } catch (err) {
-      toast.error('Microphone access denied')
-    }
-  }
-
-  const stopRecording = () => {
-    mediaRecorderRef.current?.stop()
-  }
-
-  const cancelRecording = () => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.onstop = null
-      mediaRecorderRef.current.stop()
-      mediaRecorderRef.current.stream?.getTracks().forEach(t => t.stop())
-    }
-    setIsRecording(false)
-    setRecordingTime(0)
-    clearInterval(recordingTimerRef.current)
-  }
-
-  const formatTime = (s) => `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`
-
-  const onEmojiClick = (emojiData) => {
-    setText(prev => prev + emojiData.emoji)
-    inputRef.current?.focus()
-  }
-
-  // Recording UI
-  if (isRecording) {
-    return (
-      <div className="flex items-center gap-4 px-4 py-3 bg-chat-header border-t border-chat-border">
-        <button onClick={cancelRecording} className="icon-btn text-red-400"><FiX size={20} /></button>
-        <div className="flex items-center gap-3 flex-1">
-          <div className="w-3 h-3 bg-red-500 rounded-full notification-pulse" />
-          <div className="flex gap-0.5 items-center">
-            {[...Array(12)].map((_, i) => (
-              <div key={i} className="waveform-bar w-0.5" style={{ height: `${Math.random() * 20 + 5}px`, animationDelay: `${i * 0.1}s` }} />
-            ))}
-          </div>
-          <span className="text-chat-textSecondary text-sm">{formatTime(recordingTime)}</span>
-        </div>
-        <button onClick={stopRecording} className="w-10 h-10 bg-primary-500 rounded-full flex items-center justify-center hover:bg-primary-600 transition-colors">
-          <FiSquare size={16} className="text-white" />
-        </button>
-      </div>
-    )
-  }
-
-  // Media preview UI
-  if (mediaPreview) {
-    return (
-      <div className="bg-chat-header border-t border-chat-border">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-chat-border">
-          <button onClick={() => setMediaPreview(null)} className="icon-btn"><FiX size={20} /></button>
-          <span className="text-chat-text text-sm font-medium">Send {mediaPreview.type}</span>
-          <div />
-        </div>
-        <div className="flex items-center justify-center p-4">
-          {mediaPreview.type === 'image' && (
-            <img src={mediaPreview.url} alt="Preview" className="max-h-48 rounded-lg object-contain" />
-          )}
-          {mediaPreview.type === 'video' && (
-            <video src={mediaPreview.url} className="max-h-48 rounded-lg" controls />
-          )}
-          {(mediaPreview.type === 'audio' || mediaPreview.type === 'document') && (
-            <div className="flex items-center gap-3 p-4 bg-chat-input rounded-lg">
-              <span className="text-3xl">{mediaPreview.type === 'audio' ? '🎵' : '📄'}</span>
-              <p className="text-chat-text text-sm">{mediaPreview.name}</p>
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-3 px-4 pb-3">
-          <input
-            value={text}
-            onChange={e => setText(e.target.value)}
-            placeholder="Add a caption..."
-            className="input-field text-sm"
-          />
-          <button
-            onClick={sendMedia}
-            disabled={isUploading}
-            className="w-10 h-10 bg-primary-500 rounded-full flex items-center justify-center hover:bg-primary-600 transition-colors flex-shrink-0"
-          >
-            {isUploading
-              ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              : <FiSend className="text-white" size={18} />
-            }
-          </button>
-        </div>
-      </div>
-    )
-  }
+  const handleSendSurprise = () => {
+    if (!text.trim() && !surpriseTime) return;
+    sendMessage(text.trim() || 'A surprise for you 🎁', 'surprise', {
+      unlockAt: surpriseTime ? new Date(surpriseTime).toISOString() : undefined,
+      isUnlocked: false,
+    });
+    setText(''); setSurpriseTime(''); setShowSurprise(false);
+  };
 
   return (
-    <div className="relative bg-chat-header border-t border-chat-border">
-      {/* Emoji Picker */}
+    <div className="bg-white dark:bg-rose-dark border-t border-pink-100 dark:border-pink-900/30 flex-shrink-0">
+      {/* FEATURE 1: Reply bar */}
       <AnimatePresence>
-        {showEmoji && (
+        {replyingTo && (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-full left-0 z-50"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden border-b border-pink-100 dark:border-pink-900/30"
           >
-            <EmojiPicker
-              onEmojiClick={onEmojiClick}
-              theme="dark"
-              height={380}
-              width={350}
-              previewConfig={{ showPreview: false }}
-            />
+            <div className="flex items-center gap-2 px-4 py-2 bg-pink-50 dark:bg-rose-mid">
+              <div className="w-0.5 h-8 rounded-full bg-pink-400 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] font-semibold text-pink-500 mb-0.5">
+                  Replying to {replyingTo.senderId?.username || 'message'}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-pink-300 truncate">
+                  {replyingTo.type === 'image' ? '📷 Photo' : (replyingTo.content || 'Message')}
+                </div>
+              </div>
+              <button onClick={clearReplyingTo} className="text-gray-400 flex-shrink-0 text-lg leading-none">×</button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      <div className="flex items-center gap-2 px-4 py-3">
-        {/* Emoji */}
-        <button
-          onClick={() => setShowEmoji(!showEmoji)}
-          className={`icon-btn ${showEmoji ? 'text-primary-500' : ''}`}
-        >
-          <FiSmile size={22} />
-        </button>
+      {/* FEATURE 2: Image preview */}
+      <AnimatePresence>
+        {imagePreview && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden border-b border-pink-100"
+          >
+            <div className="px-4 py-3 bg-pink-50 dark:bg-rose-mid">
+              <div className="text-xs text-pink-500 font-medium mb-2">📷 Image preview</div>
+              <div className="flex items-start gap-3">
+                <div className="relative flex-shrink-0">
+                  <img src={imagePreview.dataUrl} alt="preview"
+                    className="w-20 h-20 rounded-xl object-cover border-2 border-pink-200" />
+                  <button onClick={handleCancelImage}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-gray-700 text-white text-xs flex items-center justify-center">
+                    ×
+                  </button>
+                </div>
+                <div className="flex-1">
+                  <input
+                    placeholder="Add a caption... (optional)"
+                    value={text}
+                    onChange={e => setText(e.target.value)}
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-pink-200 outline-none bg-white dark:bg-rose-dark"
+                    onKeyDown={e => e.key === 'Enter' && handleSend()}
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={uploading}
+                    className="mt-2 w-full py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50"
+                    style={{ background: 'linear-gradient(135deg, #FF4F8B, #FF8FB1)' }}
+                  >
+                    {uploading ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="12" r="10" stroke="white" strokeWidth="3" strokeDasharray="40 20" />
+                        </svg>
+                        Uploading...
+                      </span>
+                    ) : 'Send Photo 📷'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-        {/* File attach */}
-        <button onClick={() => fileRef.current?.click()} className="icon-btn">
-          <FiPaperclip size={22} />
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          className="hidden"
-          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
-          onChange={handleFileSelect}
-        />
+      {/* Quick actions panel */}
+      <AnimatePresence>
+        {showExtras && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden border-b border-pink-100"
+          >
+            <div className="flex gap-2 flex-wrap p-3 bg-pink-50 dark:bg-rose-mid">
+              {[
+                { label: 'Good Morning ☀️', action: handleGoodMorning },
+                { label: 'Good Night 🌙', action: handleGoodNight },
+                { label: 'Miss You 💕', action: handleMissYou },
+                { label: 'Share Song 🎵', action: () => { setShowSong(true); setShowExtras(false); } },
+                { label: 'Surprise 🎁', action: () => { setShowSurprise(true); setShowExtras(false); } },
+              ].map((btn) => (
+                <button key={btn.label} onClick={btn.action}
+                  className="px-3 py-1.5 rounded-full text-xs font-medium bg-white dark:bg-rose-dark text-pink-500 border border-pink-200 dark:border-pink-800 active:scale-95 transition-transform whitespace-nowrap">
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Song input */}
+      <AnimatePresence>
+        {showSong && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden">
+            <div className="p-3 bg-pink-50 dark:bg-rose-mid space-y-2 border-b border-pink-100">
+              <input placeholder="Song title 🎵" value={songTitle} onChange={e => setSongTitle(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-xl border border-pink-200 outline-none bg-white dark:bg-rose-dark" />
+              <input placeholder="Spotify or YouTube URL" value={songUrl} onChange={e => setSongUrl(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-xl border border-pink-200 outline-none bg-white dark:bg-rose-dark" />
+              <div className="flex gap-2">
+                <button onClick={handleSendSong} className="flex-1 py-2 rounded-xl text-white text-sm font-medium"
+                  style={{ background: 'linear-gradient(135deg, #FF4F8B, #FF8FB1)' }}>Send 🎵</button>
+                <button onClick={() => setShowSong(false)} className="px-4 py-2 rounded-xl bg-gray-100 text-gray-500 text-sm">✕</button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Surprise input */}
+      <AnimatePresence>
+        {showSurprise && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden">
+            <div className="p-3 bg-pink-50 dark:bg-rose-mid space-y-2 border-b border-pink-100">
+              <p className="text-xs text-pink-500 font-medium">🎁 Schedule a surprise message</p>
+              <textarea placeholder="Your surprise message..." value={text} onChange={e => setText(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-xl border border-pink-200 outline-none resize-none bg-white dark:bg-rose-dark" rows={2} />
+              <input type="datetime-local" value={surpriseTime} onChange={e => setSurpriseTime(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-xl border border-pink-200 outline-none bg-white dark:bg-rose-dark" />
+              <div className="flex gap-2">
+                <button onClick={handleSendSurprise} className="flex-1 py-2 rounded-xl text-white text-sm font-medium"
+                  style={{ background: 'linear-gradient(135deg, #FF4F8B, #FF8FB1)' }}>Schedule 🎁</button>
+                <button onClick={() => setShowSurprise(false)} className="px-4 py-2 rounded-xl bg-gray-100 text-gray-500 text-sm">✕</button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Main input row */}
+      <div className="flex items-end gap-2 px-3 py-2">
+        {/* Extras toggle */}
+        <motion.button whileTap={{ scale: 0.9 }} onClick={() => setShowExtras(s => !s)}
+          className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 bg-pink-50 dark:bg-rose-mid text-pink-400 text-lg transition-colors">
+          {showExtras ? '✕' : '✨'}
+        </motion.button>
+
+        {/* Image upload */}
+        <motion.button whileTap={{ scale: 0.9 }}
+          onClick={() => !imagePreview && fileRef.current?.click()}
+          disabled={uploading}
+          className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 bg-pink-50 dark:bg-rose-mid text-pink-400 text-lg transition-colors disabled:opacity-40">
+          {uploading ? (
+            <svg className="animate-spin w-5 h-5 text-pink-400" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="40 20" />
+            </svg>
+          ) : '📷'}
+        </motion.button>
+        <input ref={fileRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleImageSelect} />
 
         {/* Text input */}
-        <input
-          ref={inputRef}
-          type="text"
-          value={text}
-          onChange={e => { setText(e.target.value); handleTyping() }}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
-          }}
-          placeholder="Type a message"
-          className="flex-1 bg-chat-input text-chat-text placeholder-chat-textSecondary rounded-full py-2.5 px-4 text-sm outline-none"
-        />
+        <div className="flex-1 relative">
+          <textarea
+            ref={inputRef}
+            value={imagePreview ? '' : text}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            placeholder={imagePreview ? 'Add a caption above ↑' : replyingTo ? 'Write a reply... 💕' : 'Say something sweet... 💕'}
+            disabled={!!imagePreview}
+            rows={1}
+            className="message-input resize-none py-2.5 leading-snug w-full disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ minHeight: '40px', maxHeight: '96px', overflowY: 'auto' }}
+          />
+        </div>
 
-        {/* Send / Mic */}
-        {text.trim() ? (
-          <button
-            onClick={() => sendMessage()}
-            className="w-10 h-10 bg-primary-500 rounded-full flex items-center justify-center hover:bg-primary-600 transition-colors flex-shrink-0"
-          >
-            <FiSend className="text-white" size={18} />
-          </button>
-        ) : (
-          <button
-            onClick={startRecording}
-            className="w-10 h-10 bg-primary-500 rounded-full flex items-center justify-center hover:bg-primary-600 transition-colors flex-shrink-0"
-          >
-            <FiMic className="text-white" size={18} />
-          </button>
-        )}
+        {/* Send button */}
+        <motion.button
+          whileTap={{ scale: 0.85 }}
+          onClick={handleSend}
+          disabled={(!text.trim() && !imagePreview) || uploading}
+          className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 text-white transition-all disabled:opacity-40"
+          style={{ background: 'linear-gradient(135deg, #FF4F8B, #FF8FB1)' }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+          </svg>
+        </motion.button>
       </div>
     </div>
-  )
+  );
 }

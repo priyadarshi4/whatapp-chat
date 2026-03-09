@@ -1,25 +1,42 @@
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
-const { protect } = require('../middleware/auth');
-const {
-  createOrGetChat,
-  getChats,
-  createGroupChat,
-  updateGroup,
-  addGroupMember,
-  removeGroupMember,
-  deleteChat,
-} = require('../controllers/chatController');
+const auth = require('../middleware/auth');
+const Chat = require('../models/Chat');
+const User = require('../models/User');
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+// GET /api/chats — get or create the couple chat
+router.get('/', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    const partnerId = user.partnerId;
 
-router.get('/', protect, getChats);
-router.post('/', protect, createOrGetChat);
-router.post('/group', protect, upload.single('avatar'), createGroupChat);
-router.put('/group/:chatId', protect, upload.single('avatar'), updateGroup);
-router.post('/group/:chatId/add', protect, addGroupMember);
-router.post('/group/:chatId/remove', protect, removeGroupMember);
-router.delete('/:chatId', protect, deleteChat);
+    let chat = await Chat.findOne({ participants: { $all: [req.userId, partnerId] } })
+      .populate('participants', 'username avatar isOnline lastSeen mood')
+      .populate({ path: 'lastMessage', populate: { path: 'senderId', select: 'username' } });
+
+    if (!chat && partnerId) {
+      chat = new Chat({ participants: [req.userId, partnerId], isCouple: true });
+      await chat.save();
+      await chat.populate('participants', 'username avatar isOnline lastSeen mood');
+    }
+
+    res.json({ chats: chat ? [chat] : [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/chats/:id
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const chat = await Chat.findById(req.params.id)
+      .populate('participants', 'username avatar isOnline lastSeen mood')
+      .populate({ path: 'lastMessage', populate: { path: 'senderId', select: 'username' } });
+    if (!chat) return res.status(404).json({ error: 'Chat not found' });
+    res.json({ chat });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 module.exports = router;

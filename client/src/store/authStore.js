@@ -1,73 +1,75 @@
-import { create } from 'zustand'
-import api from '../utils/api'
-import { initSocket, disconnectSocket } from '../socket/socket'
+import { create } from 'zustand';
+import api from '../utils/api';
+import { initSocket, disconnectSocket } from '../utils/socket';
 
-export const useAuthStore = create((set, get) => ({
-  user: JSON.parse(localStorage.getItem('chatapp_user') || 'null'),
-  token: localStorage.getItem('chatapp_token') || null,
-  isLoading: false,
+const useAuthStore = create((set, get) => ({
+  user: null,
+  partner: null,
+  token: localStorage.getItem('token'),
+  loading: true,
   error: null,
 
-  login: async (email, password) => {
-    set({ isLoading: true, error: null })
+  initialize: async () => {
+    const token = localStorage.getItem('token');
+    if (!token) { set({ loading: false }); return; }
     try {
-      const { data } = await api.post('/auth/login', { email, password })
-      localStorage.setItem('chatapp_token', data.token)
-      localStorage.setItem('chatapp_user', JSON.stringify(data.user))
-      initSocket(data.token)
-      set({ user: data.user, token: data.token, isLoading: false })
-      return { success: true }
-    } catch (err) {
-      const error = err.response?.data?.error || 'Login failed'
-      set({ isLoading: false, error })
-      return { success: false, error }
+      const { data } = await api.get('/auth/me');
+      set({ user: data.user, token, loading: false });
+      initSocket(token);
+      // Load partner
+      const p = await api.get('/users/partner');
+      set({ partner: p.data.partner });
+    } catch (_) {
+      localStorage.removeItem('token');
+      set({ token: null, user: null, loading: false });
     }
   },
 
-  register: async (name, email, password) => {
-    set({ isLoading: true, error: null })
-    try {
-      const { data } = await api.post('/auth/register', { name, email, password })
-      localStorage.setItem('chatapp_token', data.token)
-      localStorage.setItem('chatapp_user', JSON.stringify(data.user))
-      initSocket(data.token)
-      set({ user: data.user, token: data.token, isLoading: false })
-      return { success: true }
-    } catch (err) {
-      const error = err.response?.data?.error || 'Registration failed'
-      set({ isLoading: false, error })
-      return { success: false, error }
-    }
+  login: async (email, password) => {
+    set({ error: null });
+    const { data } = await api.post('/auth/login', { email, password });
+    localStorage.setItem('token', data.token);
+    set({ token: data.token, user: data.user });
+    initSocket(data.token);
+    const p = await api.get('/users/partner');
+    set({ partner: p.data.partner });
+    return data;
+  },
+
+  register: async (form) => {
+    set({ error: null });
+    const { data } = await api.post('/auth/register', form);
+    localStorage.setItem('token', data.token);
+    set({ token: data.token, user: data.user });
+    initSocket(data.token);
+    return data;
   },
 
   logout: async () => {
-    try {
-      await api.post('/auth/logout')
-    } catch (err) {
-      // ignore
-    }
-    disconnectSocket()
-    localStorage.removeItem('chatapp_token')
-    localStorage.removeItem('chatapp_user')
-    set({ user: null, token: null })
+    try { await api.post('/auth/logout'); } catch (_) {}
+    localStorage.removeItem('token');
+    disconnectSocket();
+    set({ user: null, partner: null, token: null });
+  },
+
+  updateMood: async (mood) => {
+    await api.patch('/users/mood', { mood });
+    set((s) => ({ user: { ...s.user, mood } }));
+  },
+
+  setPartnerOnline: (isOnline, lastSeen) => {
+    set((s) => ({ partner: s.partner ? { ...s.partner, isOnline, lastSeen } : s.partner }));
   },
 
   updateUser: (updates) => {
-    const user = { ...get().user, ...updates }
-    localStorage.setItem('chatapp_user', JSON.stringify(user))
-    set({ user })
+    set((s) => ({ user: s.user ? { ...s.user, ...updates } : s.user }));
   },
 
-  fetchMe: async () => {
-    try {
-      const { data } = await api.get('/auth/me')
-      const user = data.user
-      localStorage.setItem('chatapp_user', JSON.stringify(user))
-      set({ user })
-    } catch (err) {
-      // token may be expired
-    }
+  setPartnerMood: (mood) => {
+    set((s) => ({ partner: s.partner ? { ...s.partner, mood } : s.partner }));
   },
+}));
 
-  clearError: () => set({ error: null }),
-}))
+export default useAuthStore;
+
+// Export setState for external use (profile page)

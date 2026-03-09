@@ -1,192 +1,98 @@
-import React, { useState } from 'react'
-import { FiSearch, FiMoreVertical, FiArrowLeft, FiPhone, FiVideo } from 'react-icons/fi'
-import { motion, AnimatePresence } from 'framer-motion'
-import { formatDistanceToNow } from 'date-fns'
-import { useAuthStore } from '../../store/authStore'
-import { useChatStore } from '../../store/chatStore'
-import { useCallStore } from '../../store/callStore'
-import { useWebRTC } from '../../hooks/useWebRTC'
-import { getSocket } from '../../socket/socket'
-import api from '../../utils/api'
-import toast from 'react-hot-toast'
-
-function getOtherParticipant(chat, userId) {
-  if (!chat?.participants) return null
-  return chat.participants.find(p => {
-    const pId = typeof p === 'object' ? (p._id?.toString() || p.toString()) : p.toString()
-    return pId !== userId?.toString()
-  })
-}
+import React, { useState } from 'react';
+import { motion } from 'framer-motion';
+import useAuthStore from '../../store/authStore';
+import useChatStore from '../../store/chatStore';
+import { getSocket } from '../../utils/socket';
 
 export default function ChatHeader() {
-  const { user } = useAuthStore()
-  const { activeChat, setActiveChat, typingUsers, updateChat } = useChatStore()
-  const { callState, startOutgoingCall } = useCallStore()
-  const { startCall } = useWebRTC()
-  const [showMenu, setShowMenu] = useState(false)
-  const [showSearch, setShowSearch] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState([])
+  const { partner, user } = useAuthStore();
+  const { typingUsers, chat } = useChatStore();
+  const [missYouSent, setMissYouSent] = useState(false);
 
-  if (!activeChat) return null
+  const isTyping = typingUsers.size > 0;
 
-  const otherUser = !activeChat.isGroup ? getOtherParticipant(activeChat, user._id) : null
-
-  const initiateCall = async (type) => {
-    if (callState !== 'idle') { toast.error('Already in a call'); return }
-    if (!otherUser?._id) { toast.error('Cannot call a group'); return }
-    startOutgoingCall({ callee: otherUser, chatId: activeChat._id, callType: type, caller: user })
-    await startCall()
-  }
-  const typing = typingUsers[activeChat._id] || []
-  const isTyping = typing.length > 0
-
-  const name = activeChat.isGroup ? activeChat.groupName : otherUser?.name
-  const avatar = activeChat.isGroup
-    ? (activeChat.groupAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(activeChat.groupName || 'G')}&background=2A3942&color=25D366`)
-    : (otherUser?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(otherUser?.name || 'U')}&background=2A3942&color=25D366`)
-
-  const statusText = activeChat.isGroup
-    ? `${activeChat.participants?.length} members`
-    : isTyping
-      ? 'typing...'
-      : otherUser?.online
-        ? 'online'
-        : otherUser?.lastSeen
-          ? `last seen ${formatDistanceToNow(new Date(otherUser.lastSeen), { addSuffix: true })}`
-          : 'offline'
-
-  const handleSearch = async (q) => {
-    if (!q.trim()) { setSearchResults([]); return }
-    try {
-      const { data } = await api.get(`/messages/${activeChat._id}/search?q=${encodeURIComponent(q)}`)
-      setSearchResults(data.messages)
-    } catch {}
-  }
-
-  const deleteChat = async () => {
-    try {
-      await api.delete(`/chats/${activeChat._id}`)
-      setActiveChat(null)
-      toast.success('Chat deleted')
-    } catch { toast.error('Failed to delete chat') }
-    setShowMenu(false)
-  }
+  const handleMissYou = async () => {
+    if (missYouSent) return;
+    setMissYouSent(true);
+    const socket = getSocket();
+    if (socket && partner?._id) {
+      socket.emit('miss_you', { chatId: chat?._id, partnerId: partner._id });
+    }
+    // Also send as message
+    const { sendMessage } = useChatStore.getState();
+    await sendMessage('I miss you so much 💕', 'miss_you');
+    setTimeout(() => setMissYouSent(false), 5000);
+  };
 
   return (
-    <div className="flex items-center px-4 py-2.5 bg-chat-header border-b border-chat-border">
-      {/* Back button (mobile) */}
-      <button onClick={() => setActiveChat(null)} className="icon-btn mr-2 lg:hidden">
-        <FiArrowLeft size={20} />
-      </button>
-
-      {/* Avatar & info */}
-      <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer">
-        <div className="relative">
-          <img src={avatar} alt={name} className="avatar w-10 h-10" />
-          {otherUser?.online && !activeChat.isGroup && (
-            <div className="absolute bottom-0 right-0 w-3 h-3 bg-primary-500 rounded-full border-2 border-chat-header" />
+    <div className="px-4 py-3 glass-card m-3 mb-0 flex items-center gap-3">
+      {/* Avatar */}
+      <div className="relative">
+        <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg overflow-hidden"
+          style={{ background: 'linear-gradient(135deg, #FF8FB1, #CDB4DB)' }}>
+          {partner?.avatar ? (
+            <img src={partner.avatar} alt={partner.username} className="w-full h-full object-cover" />
+          ) : (
+            <span>{partner?.username?.[0]?.toUpperCase() || '💕'}</span>
           )}
         </div>
-        <div className="min-w-0">
-          <p className="text-chat-text font-semibold text-sm truncate">{name}</p>
-          <p className={`text-xs truncate ${isTyping ? 'text-primary-500' : 'text-chat-textSecondary'}`}>
-            {isTyping && activeChat.isGroup ? `${typing[0]?.userName} is typing...` : statusText}
-          </p>
+        {partner?.isOnline && (
+          <div className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-green-400 border-2 border-white" />
+        )}
+      </div>
+
+      {/* Name + status */}
+      <div className="flex-1 min-w-0">
+        <div className="font-semibold text-sm text-gray-800 dark:text-pink-100 truncate">
+          {partner?.username || 'My Love'} {partner?.mood ? moodEmoji(partner.mood) : ''}
+        </div>
+        <div className="text-xs text-gray-400">
+          {isTyping ? (
+            <span className="text-pink-500 flex items-center gap-1">
+              <span className="flex gap-0.5">
+                {[0,1,2].map(i => (
+                  <motion.span key={i} animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, delay: i * 0.15, duration: 0.6 }}
+                    className="inline-block w-1 h-1 rounded-full bg-pink-400" />
+                ))}
+              </span>
+              typing...
+            </span>
+          ) : partner?.isOnline ? 'online ✨' : partner?.lastSeen ? `last seen ${formatLastSeen(partner.lastSeen)}` : ''}
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center gap-1">
-        {/* Call buttons — only for 1-1 chats */}
-        {!activeChat.isGroup && (
-          <>
-            <button
-              onClick={() => initiateCall('audio')}
-              disabled={callState !== 'idle'}
-              title="Voice call"
-              className="icon-btn disabled:opacity-40"
-            >
-              <FiPhone size={19} />
-            </button>
-            <button
-              onClick={() => initiateCall('video')}
-              disabled={callState !== 'idle'}
-              title="Video call"
-              className="icon-btn disabled:opacity-40"
-            >
-              <FiVideo size={19} />
-            </button>
-          </>
-        )}
-
-        <button onClick={() => { setShowSearch(!showSearch); setSearchQuery(''); setSearchResults([]) }} className="icon-btn">
-          <FiSearch size={20} />
-        </button>
-
-        <div className="relative">
-          <button onClick={() => setShowMenu(!showMenu)} className="icon-btn">
-            <FiMoreVertical size={20} />
-          </button>
-          <AnimatePresence>
-            {showMenu && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: -5 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                transition={{ duration: 0.15 }}
-                className="absolute right-0 top-10 bg-chat-panel border border-chat-border rounded-lg shadow-xl z-50 min-w-[180px] overflow-hidden"
-                onMouseLeave={() => setShowMenu(false)}
-              >
-                {[
-                  { label: 'Search messages', action: () => { setShowSearch(true); setShowMenu(false) } },
-                  { label: 'Mute notifications', action: () => setShowMenu(false) },
-                  ...(activeChat.isGroup && activeChat.groupAdmin === user._id ? [
-                    { label: 'Group info', action: () => setShowMenu(false) },
-                  ] : []),
-                  { label: 'Delete chat', action: deleteChat, className: 'text-red-400' },
-                ].map(item => (
-                  <button key={item.label} onClick={item.action} className={`w-full text-left px-4 py-3 text-sm hover:bg-chat-hover transition-colors ${item.className || 'text-chat-text'}`}>
-                    {item.label}
-                  </button>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      </div>
-
-      {/* Search bar dropdown */}
-      <AnimatePresence>
-        {showSearch && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="absolute top-14 left-0 right-0 bg-chat-header border-b border-chat-border px-4 py-2 z-40"
-          >
-            <input
-              autoFocus
-              type="text"
-              value={searchQuery}
-              onChange={e => { setSearchQuery(e.target.value); handleSearch(e.target.value) }}
-              placeholder="Search messages..."
-              className="input-field text-sm"
-              onKeyDown={e => e.key === 'Escape' && setShowSearch(false)}
-            />
-            {searchResults.length > 0 && (
-              <div className="mt-2 max-h-40 overflow-y-auto">
-                {searchResults.map(msg => (
-                  <div key={msg._id} className="py-2 border-b border-chat-border/50 last:border-0">
-                    <p className="text-xs text-chat-textSecondary">{msg.senderId?.name}</p>
-                    <p className="text-chat-text text-sm truncate">{msg.message}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Miss you button */}
+      <motion.button
+        whileTap={{ scale: 0.9 }}
+        onClick={handleMissYou}
+        disabled={missYouSent}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+          missYouSent
+            ? 'bg-pink-100 text-pink-300'
+            : 'text-white shadow-glow-pink'
+        }`}
+        style={!missYouSent ? { background: 'linear-gradient(135deg, #FF4F8B, #FF8FB1)' } : {}}
+      >
+        <motion.span animate={missYouSent ? { scale: [1, 1.4, 1] } : {}} transition={{ repeat: Infinity, duration: 0.6 }}>
+          ❤️
+        </motion.span>
+        {missYouSent ? 'Sent!' : 'Miss You'}
+      </motion.button>
     </div>
-  )
+  );
+}
+
+function moodEmoji(mood) {
+  const map = { happy: '😊', missing_you: '🥺', thinking_of_you: '💭', busy: '😤', in_love: '🥰' };
+  return map[mood] || '';
+}
+
+function formatLastSeen(date) {
+  const d = new Date(date);
+  const now = new Date();
+  const diff = (now - d) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return d.toLocaleDateString();
 }

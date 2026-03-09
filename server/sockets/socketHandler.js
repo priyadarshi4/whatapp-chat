@@ -1,382 +1,173 @@
-const { verifySocketToken } = require('../middleware/auth');
-const Message = require('../models/Message');
-const Chat = require('../models/Chat');
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { redisSet, redisGet, redisDel, redisSadd, redisSrem, redisSmembers } = require('../config/redis');
-const { sendPushToUser } = require('../utils/webPush');
+const Message = require('../models/Message');
+const ChatModel = require('../models/Chat');
 
-// In-memory fallback for socket tracking
-const onlineUsers = new Map(); // userId -> Set of socketIds
-const typingUsers = new Map(); // chatId -> Set of userIds
+const onlineUsers = new Map();
 
 const initializeSocket = (io) => {
-  // Auth middleware
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth.token;
-      if (!token) return next(new Error('Authentication required'));
-
-      const user = await verifySocketToken(token);
-      if (!user) return next(new Error('Invalid token'));
-
+      if (!token) return next(new Error('No token'));
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'couple-secret-key');
+      const user = await User.findById(decoded.userId).select('-password');
+      if (!user) return next(new Error('User not found'));
+      socket.userId = decoded.userId;
       socket.user = user;
       next();
     } catch (err) {
-      next(new Error('Authentication failed'));
+      next(new Error('Auth failed'));
     }
   });
 
   io.on('connection', async (socket) => {
-    const userId = socket.user._id.toString();
-    console.log(`🔌 User connected: ${socket.user.name} (${socket.id})`);
+    const userId = socket.userId;
+    onlineUsers.set(userId, socket.id);
 
-    // Track online users
-    if (!onlineUsers.has(userId)) {
-      onlineUsers.set(userId, new Set());
-    }
-    onlineUsers.get(userId).add(socket.id);
+    await User.findByIdAndUpdate(userId, { isOnline: true, lastSeen: new Date() });
+    socket.broadcast.emit('user:online', { userId, isOnline: true });
 
-    // Update online status
-    await User.findByIdAndUpdate(userId, { online: true });
-    await redisSet(`online:${userId}`, true);
-
-    // Broadcast online status to all users in same chats
-    const userChats = await Chat.find({ participants: userId }).select('participants');
-    const chatRooms = userChats.map((c) => c._id.toString());
-
-    // Join personal userId room (for direct call/push routing)
-    socket.join(userId);
-
-    // Join all chat rooms
-    chatRooms.forEach((chatId) => {
-      socket.join(chatId);
-    });
-
-    // Notify others user is online
-    io.emit('user:online', { userId, online: true });
-
-    // ─── Messaging Events ────────────────────────────────────────────────
-
-    socket.on('message:send', async (data) => {
-      try {
-        const { chatId, message, messageType = 'text', replyTo, tempId, existingMessageId } = data;
-
-        const chat = await Chat.findOne({ _id: chatId, participants: userId });
-        if (!chat) return;
-
-        let populated;
-
-        // If message was already saved via REST (media upload), just broadcast it
-        if (existingMessageId) {
-          populated = await Message.findById(existingMessageId)
-            .populate('senderId', 'name avatar')
-            .populate('replyTo');
-        } else {
-          const newMessage = await Message.create({
-            chatId,
-            senderId: userId,
-            message: message || '',
-            messageType,
-            replyTo: replyTo || null,
-            deliveredTo: [{ user: userId }],
-          });
-
-          await Chat.findByIdAndUpdate(chatId, { lastMessage: newMessage._id });
-
-          populated = await Message.findById(newMessage._id)
-            .populate('senderId', 'name avatar')
-            .populate('replyTo');
-        }
-
-        const chatIdStr = chatId.toString();
-
-        // Emit to all in chat (including sender so optimistic msg can be replaced)
-        io.to(chatIdStr).emit('message:received', {
-          message: { ...populated.toObject(), chatId: chatIdStr },
-          tempId,
-          chatId: chatIdStr,
-        });
-
-        // Mark as delivered for online recipients + push notify offline ones
-        const recipientIds = chat.participants
-          .map((p) => p.toString())
-          .filter((id) => id !== userId);
-
-        for (const recipientId of recipientIds) {
-          if (onlineUsers.has(recipientId)) {
-            // User is online — mark delivered
-            await Message.findByIdAndUpdate(populated._id, {
-              $addToSet: { deliveredTo: { user: recipientId } },
-            });
-            io.to(chatIdStr).emit('message:delivered', {
-              messageId: populated._id,
-              chatId: chatIdStr,
-            });
-          } else {
-            // User is OFFLINE — send push notification
-            try {
-              const recipientUser = await User.findById(recipientId).select('name pushSubscription');
-              if (recipientUser?.pushSubscription) {
-                const senderName = populated.senderId?.name || 'Someone';
-                const chatName = chat.isGroup ? (chat.groupName || 'Group') : senderName;
-
-                let bodyText;
-                switch (populated.messageType) {
-                  case 'image':    bodyText = '📷 Photo'; break;
-                  case 'video':    bodyText = '🎥 Video'; break;
-                  case 'audio':    bodyText = '🎙️ Voice message'; break;
-                  case 'document': bodyText = '📄 Document'; break;
-                  default:
-                    bodyText = populated.message || 'New message';
-                    if (bodyText.length > 80) bodyText = bodyText.substring(0, 80) + '…';
-                }
-
-                await sendPushToUser(recipientUser, {
-                  title: chat.isGroup ? `${senderName} in ${chatName}` : senderName,
-                  body: bodyText,
-                  icon: populated.senderId?.avatar || '/chat-icon.svg',
-                  badge: '/badge-icon.png',
-                  tag: `chat-${chatIdStr}`,        // Groups notifications by chat
-                  renotify: true,                   // Always vibrate even if same tag
-                  data: {
-                    chatId: chatIdStr,
-                    senderId: userId,
-                    url: '/',
-                  },
-                  actions: [
-                    { action: 'open', title: 'Open Chat' },
-                    { action: 'dismiss', title: 'Dismiss' },
-                  ],
-                });
-              }
-            } catch (pushErr) {
-              console.error('Push notification failed for', recipientId, pushErr.message);
+    // FEATURE 6: Mark undelivered messages as delivered when user connects
+    try {
+      const user = await User.findById(userId);
+      if (user && user.partnerId) {
+        const chat = await ChatModel.findOne({ participants: { $all: [userId, user.partnerId] } });
+        if (chat) {
+          const count = await Message.countDocuments({ chatId: chat._id, senderId: user.partnerId, deliveryStatus: 'sent' });
+          if (count > 0) {
+            await Message.updateMany(
+              { chatId: chat._id, senderId: user.partnerId, deliveryStatus: 'sent' },
+              { deliveryStatus: 'delivered', deliveredAt: new Date() }
+            );
+            const partnerSocketId = onlineUsers.get(user.partnerId.toString());
+            if (partnerSocketId) {
+              io.to(partnerSocketId).emit('message:delivered_bulk', { chatId: chat._id.toString(), deliveredAt: new Date().toISOString() });
             }
           }
         }
-      } catch (err) {
-        console.error('message:send error:', err);
-        socket.emit('error', { message: 'Failed to send message' });
       }
-    });
+    } catch (_) {}
 
-    socket.on('message:seen', async ({ chatId }) => {
+    socket.on('chat:join', (chatId) => { socket.join('chat:' + chatId); });
+    socket.on('chat:leave', (chatId) => { socket.leave('chat:' + chatId); });
+
+    // Send message — with delivery status + reply populate
+    socket.on('message:send', async (data, callback) => {
       try {
-        const updatedMessages = await Message.updateMany(
-          {
-            chatId,
-            senderId: { $ne: userId },
-            'seenBy.user': { $ne: userId },
-          },
-          { $addToSet: { seenBy: { user: userId, seenAt: new Date() } } }
-        );
+        const { chatId, content, type = 'text', mediaUrl, songData, unlockAt, replyTo, tempId } = data;
+        const isUnlocked = !unlockAt || new Date(unlockAt) <= new Date();
 
-        if (updatedMessages.modifiedCount > 0) {
-          io.to(chatId).emit('message:seen', { chatId, seenBy: userId });
-        }
-      } catch (err) {
-        console.error('message:seen error:', err);
-      }
-    });
+        const user = await User.findById(userId);
+        const partnerOnline = user && user.partnerId && onlineUsers.has(user.partnerId.toString());
+        const initialStatus = partnerOnline ? 'delivered' : 'sent';
 
-    socket.on('message:edit', async ({ messageId, message, chatId }) => {
-      try {
-        const msg = await Message.findById(messageId);
-        if (!msg || msg.senderId.toString() !== userId) return;
-
-        msg.message = message;
-        msg.isEdited = true;
-        msg.editedAt = new Date();
+        const msg = new Message({
+          chatId, senderId: userId, content, type, mediaUrl, songData,
+          unlockAt: unlockAt ? new Date(unlockAt) : undefined,
+          isUnlocked,
+          replyTo: replyTo || undefined,
+          deliveryStatus: initialStatus,
+          deliveredAt: partnerOnline ? new Date() : undefined,
+        });
         await msg.save();
+        await ChatModel.findByIdAndUpdate(chatId, { lastMessage: msg._id, lastMessageAt: new Date() });
+        await msg.populate('senderId', 'username avatar');
+        if (replyTo) {
+          await msg.populate({ path: 'replyTo', select: 'content senderId type mediaUrl', populate: { path: 'senderId', select: 'username avatar' } });
+        }
 
-        io.to(chatId).emit('message:edited', { messageId, message, chatId });
+        const msgData = Object.assign({}, msg.toJSON(), { tempId });
+        io.to('chat:' + chatId).emit('message:new', msgData);
+        if (callback) callback({ success: true, message: msgData });
       } catch (err) {
-        console.error('message:edit error:', err);
+        if (callback) callback({ success: false, error: err.message });
       }
     });
 
-    socket.on('message:delete', async ({ messageId, chatId, deleteForEveryone }) => {
-      try {
-        const msg = await Message.findById(messageId);
-        if (!msg) return;
+    socket.on('typing:start', ({ chatId }) => { socket.to('chat:' + chatId).emit('typing:start', { userId, chatId }); });
+    socket.on('typing:stop', ({ chatId }) => { socket.to('chat:' + chatId).emit('typing:stop', { userId, chatId }); });
 
-        if (deleteForEveryone && msg.senderId.toString() === userId) {
-          msg.deletedForEveryone = true;
-          msg.message = 'This message was deleted';
-          msg.mediaUrl = '';
-          await msg.save();
-          io.to(chatId).emit('message:deleted', { messageId, chatId, deleteForEveryone: true });
-        } else {
-          msg.deletedFor.push(userId);
-          await msg.save();
-          socket.emit('message:deleted', { messageId, chatId, deleteForEveryone: false });
-        }
-      } catch (err) {
-        console.error('message:delete error:', err);
-      }
+    socket.on('miss_you', async ({ chatId, partnerId }) => {
+      const partnerSocketId = onlineUsers.get(partnerId);
+      if (partnerSocketId) io.to(partnerSocketId).emit('miss_you', { from: socket.user, chatId });
+    });
+
+    // FEATURE 6: Read receipts - blue ticks
+    socket.on('message:read', async ({ chatId }) => {
+      try {
+        await Message.updateMany(
+          { chatId, senderId: { $ne: userId }, deliveryStatus: { $in: ['sent', 'delivered'] } },
+          { deliveryStatus: 'read', isRead: true, readAt: new Date() }
+        );
+        socket.to('chat:' + chatId).emit('message:read_bulk', { chatId, readBy: userId, readAt: new Date().toISOString() });
+      } catch (_) {}
+    });
+
+    socket.on('message:delivered', async ({ messageId, chatId }) => {
+      try {
+        await Message.findByIdAndUpdate(messageId, { deliveryStatus: 'delivered', deliveredAt: new Date() });
+        socket.to('chat:' + chatId).emit('message:status_update', { messageId, deliveryStatus: 'delivered', deliveredAt: new Date().toISOString() });
+      } catch (_) {}
     });
 
     socket.on('message:react', async ({ messageId, emoji, chatId }) => {
       try {
         const msg = await Message.findById(messageId);
         if (!msg) return;
-
-        // Remove previous reaction by user
-        msg.reactions = msg.reactions.map((r) => ({
-          ...r.toObject(),
-          users: r.users.filter((u) => u.toString() !== userId),
-        })).filter((r) => r.users.length > 0);
-
-        // Add new reaction
-        const existing = msg.reactions.find((r) => r.emoji === emoji);
+        const existing = msg.reactions.find(r => r.userId.toString() === userId);
         if (existing) {
-          existing.users.push(userId);
+          if (existing.emoji === emoji) msg.reactions = msg.reactions.filter(r => r.userId.toString() !== userId);
+          else existing.emoji = emoji;
         } else {
-          msg.reactions.push({ emoji, users: [userId] });
+          msg.reactions.push({ userId, emoji });
         }
-
         await msg.save();
-        io.to(chatId).emit('message:reacted', { messageId, reactions: msg.reactions, chatId });
-      } catch (err) {
-        console.error('message:react error:', err);
-      }
+        io.to('chat:' + chatId).emit('message:reacted', { messageId, reactions: msg.reactions });
+      } catch (_) {}
     });
 
-    // ─── Typing Events ────────────────────────────────────────────────────
-
-    socket.on('typing:start', ({ chatId }) => {
-      if (!typingUsers.has(chatId)) typingUsers.set(chatId, new Set());
-      typingUsers.get(chatId).add(userId);
-
-      socket.to(chatId).emit('typing:update', {
-        chatId,
-        typingUsers: [...typingUsers.get(chatId)],
-        userId,
-        userName: socket.user.name,
-        isTyping: true,
-      });
+    socket.on('mood:update', async ({ mood }) => {
+      await User.findByIdAndUpdate(userId, { mood, moodUpdatedAt: new Date() });
+      socket.broadcast.emit('mood:updated', { userId, mood });
     });
 
-    socket.on('typing:stop', ({ chatId }) => {
-      if (typingUsers.has(chatId)) {
-        typingUsers.get(chatId).delete(userId);
-      }
-
-      socket.to(chatId).emit('typing:update', {
-        chatId,
-        typingUsers: typingUsers.has(chatId) ? [...typingUsers.get(chatId)] : [],
-        userId,
-        userName: socket.user.name,
-        isTyping: false,
-      });
+    socket.on('call:offer', ({ to, offer, callType }) => {
+      const s = onlineUsers.get(to);
+      if (s) io.to(s).emit('call:incoming', { from: userId, offer, callType, caller: socket.user });
+    });
+    socket.on('call:answer', ({ to, answer }) => {
+      const s = onlineUsers.get(to);
+      if (s) io.to(s).emit('call:answered', { from: userId, answer });
+    });
+    socket.on('call:ice', ({ to, candidate }) => {
+      const s = onlineUsers.get(to);
+      if (s) io.to(s).emit('call:ice', { from: userId, candidate });
+    });
+    socket.on('call:end', ({ to }) => {
+      const s = onlineUsers.get(to);
+      if (s) io.to(s).emit('call:ended', { from: userId });
+    });
+    socket.on('call:reject', ({ to }) => {
+      const s = onlineUsers.get(to);
+      if (s) io.to(s).emit('call:rejected', { from: userId });
     });
 
-    // ─── Chat Events ──────────────────────────────────────────────────────
-
-    socket.on('chat:join', (chatId) => {
-      socket.join(chatId);
-    });
-
-    socket.on('chat:leave', (chatId) => {
-      socket.leave(chatId);
-    });
-
-    socket.on('chat:new', (chat) => {
-      // Notify all participants of new chat
-      chat.participants.forEach((participantId) => {
-        if (participantId.toString() !== userId && onlineUsers.has(participantId.toString())) {
-          io.to(participantId.toString()).emit('chat:created', chat);
-        }
-      });
-    });
-
-    // ─── Status Events ────────────────────────────────────────────────────
-
-    // Broadcast new status to all contacts who are online
-    socket.on('status:new', async (status) => {
+    socket.on('message:pin', async ({ messageId, chatId }) => {
       try {
-        const userChats = await Chat.find({ participants: userId }).select('participants').lean();
-        const contactIds = new Set();
-        userChats.forEach(c => c.participants.forEach(p => {
-          if (p.toString() !== userId) contactIds.add(p.toString());
-        }));
-        contactIds.forEach(cid => {
-          if (onlineUsers.has(cid)) {
-            io.to(cid).emit('status:new', status);
-          }
-        });
-      } catch (err) {
-        console.error('status:new broadcast error:', err);
-      }
+        const msg = await Message.findById(messageId);
+        if (!msg) return;
+        msg.isPinned = !msg.isPinned;
+        msg.pinnedAt = msg.isPinned ? new Date() : undefined;
+        await msg.save();
+        io.to('chat:' + chatId).emit('message:pinned', { messageId, isPinned: msg.isPinned });
+      } catch (_) {}
     });
-
-    // ─── WebRTC / Call Signaling ─────────────────────────────────────────
-    // All call events are routed to the recipient's personal room (userId)
-    // Each user joins their own userId room on connect (see above)
-
-    // offer is bundled WITH call:incoming so callee receives both atomically
-    socket.on('call:incoming', ({ to, chatId, callType, offer }) => {
-      io.to(to).emit('call:incoming', {
-        from: userId,
-        chatId,
-        callType,
-        offer,
-        caller: { _id: userId, name: socket.user.name, avatar: socket.user.avatar },
-      });
-    });
-
-    socket.on('webrtc:answer', ({ chatId, answer, to }) => {
-      io.to(to).emit('webrtc:answer', { answer, from: userId, chatId });
-    });
-
-    socket.on('webrtc:ice-candidate', ({ chatId, candidate, to }) => {
-      io.to(to).emit('webrtc:ice-candidate', { candidate, from: userId, chatId });
-    });
-
-    socket.on('call:accept', ({ to, chatId }) => {
-      io.to(to).emit('call:accepted', { from: userId, chatId });
-    });
-
-    socket.on('call:decline', ({ to, chatId }) => {
-      io.to(to).emit('call:declined', { from: userId, chatId });
-    });
-
-    socket.on('call:end', ({ to, chatId }) => {
-      io.to(to).emit('call:ended', { from: userId, chatId });
-    });
-
-    // ─── Disconnect ───────────────────────────────────────────────────────
 
     socket.on('disconnect', async () => {
-      console.log(`🔌 User disconnected: ${socket.user.name}`);
-
-      if (onlineUsers.has(userId)) {
-        onlineUsers.get(userId).delete(socket.id);
-        if (onlineUsers.get(userId).size === 0) {
-          onlineUsers.delete(userId);
-
-          // Update offline status
-          const lastSeen = new Date();
-          await User.findByIdAndUpdate(userId, { online: false, lastSeen });
-          await redisDel(`online:${userId}`);
-
-          // Notify others
-          io.emit('user:offline', { userId, lastSeen });
-        }
-      }
-
-      // Remove from typing
-      typingUsers.forEach((users, chatId) => {
-        if (users.has(userId)) {
-          users.delete(userId);
-          io.to(chatId).emit('typing:update', {
-            chatId,
-            typingUsers: [...users],
-            userId,
-            isTyping: false,
-          });
-        }
-      });
+      onlineUsers.delete(userId);
+      await User.findByIdAndUpdate(userId, { isOnline: false, lastSeen: new Date() });
+      socket.broadcast.emit('user:online', { userId, isOnline: false, lastSeen: new Date() });
     });
   });
 };

@@ -4,22 +4,21 @@ export default function useKeyboard() {
   const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   useEffect(() => {
-    const viewport = window.visualViewport;
-
-    if (!viewport) return;
+    const initialHeight = window.innerHeight;
 
     const handleResize = () => {
-      const heightDiff = window.innerHeight - viewport.height;
+      const heightDiff = initialHeight - window.innerHeight;
 
-      // keyboard usually reduces viewport by >120px
-      setKeyboardOpen(heightDiff > 120);
+      if (heightDiff > 150) {
+        setKeyboardOpen(true);
+      } else {
+        setKeyboardOpen(false);
+      }
     };
 
-    viewport.addEventListener("resize", handleResize);
+    window.addEventListener("resize", handleResize);
 
-    return () => {
-      viewport.removeEventListener("resize", handleResize);
-    };
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   return keyboardOpen;

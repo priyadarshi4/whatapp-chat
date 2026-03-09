@@ -6,7 +6,7 @@ import useChatStore from '../store/chatStore';
 import { getSocket } from '../utils/socket';
 import BottomNav from '../components/shared/BottomNav';
 import FloatingHearts from '../components/shared/FloatingHearts';
-
+import useKeyboard from "../hooks/useKeyboard";
 const ChatPage = lazy(() => import('./ChatPage'));
 const MomentsPage = lazy(() => import('./MomentsPage'));
 const LovePage = lazy(() => import('./LovePage'));
@@ -20,6 +20,7 @@ const PageLoader = () => (
 );
 
 export default function MainApp() {
+  const keyboardOpen = useKeyboard();
   const location = useLocation();
   const { user, setPartnerOnline, setPartnerMood } = useAuthStore();
   const {
@@ -120,7 +121,7 @@ export default function MainApp() {
         </Suspense>
       </div>
 
-      <BottomNav />
+      {!keyboardOpen && <BottomNav />}
     </div>
   );
 }

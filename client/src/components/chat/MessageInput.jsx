@@ -96,8 +96,8 @@ export default function MessageInput() {
     setImagePreview(null);
   };
 
-  const handleGoodMorning = () => { sendMessage('Good Morning ☀️ Hope your day is as beautiful as you are! 🌸', 'good_morning'); setShowExtras(false); };
-  const handleGoodNight = () => { sendMessage('Good Night 🌙 Sweet dreams my love 💕', 'good_night'); setShowExtras(false); };
+  const handleGoodMorning = () => { sendMessage('Goooodduuu Morningg ☀️ Hope your day is as beautiful as you are! 🌸', 'good_morning'); setShowExtras(false); };
+  const handleGoodNight = () => { sendMessage('Goooodduuuu Nightuuuu 🌙 Sweet dreams my love 💕', 'good_night'); setShowExtras(false); };
   const handleMissYou = () => { sendMessage('I miss you so much 💕', 'miss_you'); setShowExtras(false); };
 
   const handleSendSong = () => {

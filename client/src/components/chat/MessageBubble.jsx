@@ -264,22 +264,22 @@ const VoiceNoteBubble = ({ url, isMine }) => {
   };
 
   const fmt = (s) => {
-    const m = Math.floor(s / 60);
-    const sec = Math.floor(s % 60);
+    const m = Math.floor((s || 0) / 60);
+    const sec = Math.floor((s || 0) % 60);
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
-  // Generate fake waveform bars (consistent per URL)
-  const bars = Array.from({ length: 30 }, (_, i) => {
-    const seed = (url?.charCodeAt(i % (url?.length || 1)) || i) * 13 + i * 7;
+  // Consistent waveform heights seeded by URL
+  const bars = Array.from({ length: 24 }, (_, i) => {
+    const seed = (url?.charCodeAt(i % Math.max(url?.length, 1)) || i) * 13 + i * 7;
     return 20 + (seed % 65);
   });
 
   return (
-    <div className="flex items-center gap-2.5" style={{ minWidth: '200px', maxWidth: '240px' }}>
+    /* Constrain width so it never overflows the bubble */
+    <div className="flex items-center gap-2" style={{ width: '100%', maxWidth: '220px', overflow: 'hidden' }}>
       <audio
-        ref={audioRef}
-        src={url}
+        ref={audioRef} src={url}
         onTimeUpdate={() => {
           if (!audioRef.current) return;
           const d = audioRef.current.duration || 0;
@@ -287,61 +287,59 @@ const VoiceNoteBubble = ({ url, isMine }) => {
           setProgress(d ? c / d : 0);
           setCurrent(c);
         }}
-        onLoadedMetadata={() => {
-          if (audioRef.current) setDuration(audioRef.current.duration || 0);
-        }}
+        onLoadedMetadata={() => { if (audioRef.current) setDuration(audioRef.current.duration || 0); }}
         onEnded={() => { setPlaying(false); setProgress(0); setCurrent(0); }}
       />
 
-      {/* Play / Pause button */}
+      {/* Play/Pause circle */}
       <button
         onClick={toggle}
-        className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-transform active:scale-90
-          ${isMine ? 'bg-white/25' : 'bg-pink-500'}`}
-        style={!isMine ? { boxShadow: '0 2px 8px rgba(255,79,139,0.4)' } : {}}
+        className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition-transform"
+        style={{
+          background: isMine ? 'rgba(255,255,255,0.25)' : 'linear-gradient(135deg,#FF4F8B,#FF8FB1)',
+          boxShadow: isMine ? 'none' : '0 2px 8px rgba(255,79,139,0.35)',
+        }}
       >
         {playing
-          ? <svg width="14" height="14" viewBox="0 0 24 24" fill={isMine ? 'white' : 'white'}><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-          : <svg width="14" height="14" viewBox="0 0 24 24" fill={isMine ? 'white' : 'white'} style={{ marginLeft: '2px' }}><path d="M8 5v14l11-7z"/></svg>
+          ? <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><rect x="5" y="3" width="5" height="18" rx="1"/><rect x="14" y="3" width="5" height="18" rx="1"/></svg>
+          : <svg width="13" height="13" viewBox="0 0 24 24" fill="white" style={{ marginLeft: '2px' }}><path d="M8 5v14l11-7z"/></svg>
         }
       </button>
 
-      {/* Waveform + time */}
-      <div className="flex-1 flex flex-col gap-1.5 min-w-0">
-        {/* Waveform bars — tap to seek */}
-        <div
-          className="flex items-center gap-[2px] h-8 cursor-pointer"
-          onClick={handleSeek}
-        >
+      {/* Waveform + time stacked */}
+      <div className="flex flex-col gap-1 flex-1 min-w-0">
+        {/* Bars — tap to seek */}
+        <div className="flex items-end gap-px h-7 cursor-pointer" onClick={handleSeek} style={{ overflow: 'hidden' }}>
           {bars.map((h, i) => {
-            const filled = i / bars.length <= progress;
+            const played = (i / bars.length) <= progress;
             return (
               <div
                 key={i}
-                className="flex-1 rounded-full transition-all"
+                className="rounded-full flex-1"
                 style={{
                   height: `${h}%`,
-                  background: isMine
-                    ? (filled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)')
-                    : (filled ? '#FF4F8B' : '#e0c0cc'),
                   minWidth: '2px',
+                  maxWidth: '6px',
+                  background: isMine
+                    ? (played ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.3)')
+                    : (played ? '#FF4F8B'                 : '#d4a0b5'),
+                  transition: 'background 0.1s',
                 }}
               />
             );
           })}
         </div>
 
-        {/* Duration */}
-        <div className={`text-[10px] font-medium ${isMine ? 'text-white/70' : 'text-gray-400'}`}>
-          {playing ? fmt(current) : fmt(duration || 0)}
-        </div>
+        {/* Time */}
+        <span className={`text-[10px] font-medium leading-none ${isMine ? 'text-white/60' : 'text-gray-400'}`}>
+          {playing ? fmt(current) : fmt(duration)}
+        </span>
       </div>
 
-      {/* Mic icon */}
-      <svg
-        width="13" height="13" viewBox="0 0 24 24" fill="none" className="flex-shrink-0 opacity-60"
-        stroke={isMine ? 'white' : '#FF4F8B'} strokeWidth="2" strokeLinecap="round"
-      >
+      {/* Mic icon — flex-shrink-0 so it doesn't compress */}
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+        stroke={isMine ? 'rgba(255,255,255,0.6)' : '#FF4F8B'} strokeWidth="2" strokeLinecap="round"
+        className="flex-shrink-0">
         <rect x="9" y="2" width="6" height="12" rx="3"/>
         <path d="M5 10a7 7 0 0014 0"/>
         <line x1="12" y1="19" x2="12" y2="22"/>

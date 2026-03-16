@@ -183,7 +183,7 @@ export default function ProfilePage() {
       <AnimatePresence>
         {editingStatus && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end pb-2">
+            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end pb-8">
             <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 25 }}
               className="bg-white dark:bg-rose-dark w-full rounded-t-3xl p-6 max-h-[65vh] overflow-y-auto pb-10">

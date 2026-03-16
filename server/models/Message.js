@@ -11,17 +11,35 @@ const messageSchema = new mongoose.Schema({
   content: { type: String, default: '' },
   type: {
     type: String,
-    enum: ['text', 'image', 'audio', 'video', 'file', 'miss_you', 'good_morning', 'good_night', 'song', 'surprise', 'time_capsule', 'system'],
+    enum: [
+      'text','image','audio','video','file',
+      'miss_you','good_morning','good_night','song','surprise','time_capsule','system',
+      // NEW TYPES
+      'gif','location','voice_note','hug','deleted_for_me','deleted_for_everyone',
+      'midnight_message'
+    ],
     default: 'text'
   },
   mediaUrl: { type: String },
   mediaThumbnail: { type: String },
-  reactions: [reactionSchema],
 
-  // FEATURE 6: WhatsApp-style delivery status
-  // 'sent' = saved to DB (single tick ✓)
-  // 'delivered' = partner socket is online when message sent (double tick ✓✓)
-  // 'read' = partner has opened the chat and read it (blue ticks 💙)
+  // File metadata
+  fileName: { type: String },
+  fileSize: { type: Number },
+  fileMime: { type: String },
+
+  // Location
+  location: {
+    lat: Number,
+    lng: Number,
+    address: String,
+    isLive: { type: Boolean, default: false },
+  },
+
+  // GIF
+  gifUrl: { type: String },
+
+  reactions: [reactionSchema],
   deliveryStatus: {
     type: String,
     enum: ['sending', 'sent', 'delivered', 'read'],
@@ -29,32 +47,18 @@ const messageSchema = new mongoose.Schema({
   },
   deliveredAt: { type: Date },
   readAt: { type: Date },
-
-  // Legacy field kept for backward compat
   isRead: { type: Boolean, default: false },
-
   isPinned: { type: Boolean, default: false },
   pinnedAt: { type: Date },
   isDeleted: { type: Boolean, default: false },
+  deletedForEveryone: { type: Boolean, default: false },
 
-  // Surprise / time capsule
   unlockAt: { type: Date },
   isUnlocked: { type: Boolean, default: true },
-
-  // Song metadata
-  songData: {
-    title: String,
-    artist: String,
-    url: String,
-    thumbnail: String,
-  },
-
-  // FEATURE 1: Reply system
+  songData: { title: String, artist: String, url: String, thumbnail: String },
   replyTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
 }, { timestamps: true });
 
 messageSchema.index({ chatId: 1, createdAt: -1 });
 messageSchema.index({ isPinned: 1, chatId: 1 });
-messageSchema.index({ deliveryStatus: 1, chatId: 1 });
-
 module.exports = mongoose.model('Message', messageSchema);

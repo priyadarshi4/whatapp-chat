@@ -3,6 +3,13 @@ const router = express.Router();
 const auth = require('../middleware/auth');
 const User = require('../models/User');
 
+router.get('/me', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).select('-password');
+    res.json({ user });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/partner', auth, async (req, res) => {
   try {
     const user = await User.findById(req.userId).populate('partnerId', 'username avatar isOnline lastSeen mood moodUpdatedAt');
@@ -25,9 +32,10 @@ router.patch('/mood', auth, async (req, res) => {
 // FEATURE 3: Profile picture + name update
 router.patch('/profile', auth, async (req, res) => {
   try {
-    const { username, avatar, relationshipStartDate } = req.body;
+    const { username, avatar, relationshipStartDate, statusText } = req.body;
     const updates = {};
     if (username) updates.username = username;
+    if (statusText !== undefined) { updates.statusText = statusText; updates.statusUpdatedAt = new Date(); }
     if (avatar !== undefined) updates.avatar = avatar;
     if (relationshipStartDate) updates.relationshipStartDate = new Date(relationshipStartDate);
     const user = await User.findByIdAndUpdate(req.userId, updates, { new: true }).select('-password');

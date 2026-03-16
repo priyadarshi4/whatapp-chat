@@ -10,7 +10,7 @@ const useChatStore = create((set, get) => ({
   page: 1,
   typingUsers: new Set(),
   unreadCount: 0,
-  replyingTo: null,          // FEATURE 1: reply state
+  replyingTo: null,
 
   loadChat: async () => {
     set({ loading: true });
@@ -19,12 +19,8 @@ const useChatStore = create((set, get) => ({
       if (data.chats.length > 0) {
         set({ chat: data.chats[0], loading: false });
         await get().loadMessages(data.chats[0]._id, 1, true);
-      } else {
-        set({ loading: false });
-      }
-    } catch (_) {
-      set({ loading: false });
-    }
+      } else { set({ loading: false }); }
+    } catch (_) { set({ loading: false }); }
   },
 
   loadMessages: async (chatId, page = 1, reset = false) => {
@@ -33,16 +29,10 @@ const useChatStore = create((set, get) => ({
       const { data } = await api.get(`/messages/${chatId}?page=${page}&limit=50`);
       set((s) => ({
         messages: reset ? data.messages : [...data.messages, ...s.messages],
-        page,
-        hasMore: data.messages.length === 50,
-        loadingMore: false,
-        loading: false,
+        page, hasMore: data.messages.length === 50, loadingMore: false, loading: false,
       }));
       return data.messages;
-    } catch (_) {
-      set({ loadingMore: false, loading: false });
-      return [];
-    }
+    } catch (_) { set({ loadingMore: false, loading: false }); return []; }
   },
 
   loadMore: async () => {
@@ -61,33 +51,29 @@ const useChatStore = create((set, get) => ({
     });
   },
 
-  updateMessageReactions: (messageId, reactions) => {
+  deleteMessage: (messageId, deleteFor) => {
     set((s) => ({
-      messages: s.messages.map(m => m._id === messageId ? { ...m, reactions } : m),
+      messages: deleteFor === 'everyone'
+        ? s.messages.map(m => m._id === messageId ? { ...m, deletedForEveryone: true, content: 'This message was deleted' } : m)
+        : s.messages.filter(m => m._id !== messageId),
     }));
+  },
+
+  updateMessageReactions: (messageId, reactions) => {
+    set((s) => ({ messages: s.messages.map(m => m._id === messageId ? { ...m, reactions } : m) }));
   },
 
   updateMessagePin: (messageId, isPinned) => {
-    set((s) => ({
-      messages: s.messages.map(m => m._id === messageId ? { ...m, isPinned } : m),
-    }));
+    set((s) => ({ messages: s.messages.map(m => m._id === messageId ? { ...m, isPinned } : m) }));
   },
 
-  // FEATURE 6: Update delivery status for all messages (bulk)
   updateDeliveryBulk: (status) => {
     set((s) => ({
       messages: s.messages.map(m =>
-        m.deliveryStatus === 'sent' || (status === 'read' && m.deliveryStatus === 'delivered')
-          ? { ...m, deliveryStatus: status }
-          : m
+        (status === 'read' && (m.deliveryStatus === 'sent' || m.deliveryStatus === 'delivered')) ||
+        (status === 'delivered' && m.deliveryStatus === 'sent')
+          ? { ...m, deliveryStatus: status } : m
       ),
-    }));
-  },
-
-  // FEATURE 6: Update single message delivery status
-  updateDeliveryStatus: (messageId, deliveryStatus) => {
-    set((s) => ({
-      messages: s.messages.map(m => m._id === messageId ? { ...m, deliveryStatus } : m),
     }));
   },
 
@@ -97,12 +83,6 @@ const useChatStore = create((set, get) => ({
     try {
       await api.patch(`/messages/${chat._id}/read`);
       set({ unreadCount: 0 });
-      // Update local state too
-      set((s) => ({
-        messages: s.messages.map(m =>
-          m.deliveryStatus !== 'read' ? { ...m, deliveryStatus: 'read', isRead: true } : m
-        ),
-      }));
     } catch (_) {}
   },
 
@@ -115,8 +95,6 @@ const useChatStore = create((set, get) => ({
   },
 
   incrementUnread: () => set((s) => ({ unreadCount: s.unreadCount + 1 })),
-
-  // FEATURE 1: Set/clear reply state
   setReplyingTo: (message) => set({ replyingTo: message }),
   clearReplyingTo: () => set({ replyingTo: null }),
 
@@ -129,10 +107,8 @@ const useChatStore = create((set, get) => ({
       _id: tempId, tempId, chatId: chat._id, content, type,
       senderId: { _id: 'me', username: 'me' },
       createdAt: new Date().toISOString(),
-      deliveryStatus: 'sending',
-      reactions: [],
-      replyTo: replyingTo || null,
-      ...extra,
+      deliveryStatus: 'sending', reactions: [],
+      replyTo: replyingTo || null, ...extra,
     };
     get().addMessage(tempMsg);
     get().clearReplyingTo();
@@ -144,17 +120,13 @@ const useChatStore = create((set, get) => ({
     if (socket?.connected) {
       socket.emit('message:send', payload, (res) => {
         if (res?.success) {
-          set((s) => ({
-            messages: s.messages.map(m => m.tempId === tempId ? { ...res.message, tempId } : m),
-          }));
+          set((s) => ({ messages: s.messages.map(m => m.tempId === tempId ? { ...res.message, tempId } : m) }));
         }
       });
     } else {
       try {
         const { data } = await api.post('/messages', { chatId: chat._id, content, type, replyTo: replyToId, ...extra });
-        set((s) => ({
-          messages: s.messages.map(m => m.tempId === tempId ? data.message : m),
-        }));
+        set((s) => ({ messages: s.messages.map(m => m.tempId === tempId ? data.message : m) }));
       } catch (_) {}
     }
   },

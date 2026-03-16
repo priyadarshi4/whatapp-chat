@@ -18,6 +18,8 @@ const turnRoutes = require('./routes/turn');
 const lettersRoutes = require('./routes/letters');
 const memoriesRoutes = require('./routes/memories');
 const coupleRoutes = require('./routes/couple');
+const gamesRoutes = require('./routes/games');
+const roomRoutes = require('./routes/room');
 
 const { initializeSocket } = require('./sockets/socketHandler');
 const { connectDB } = require('./config/database');
@@ -99,6 +101,8 @@ app.use('/api/turn', turnRoutes);
 app.use('/api/letters', lettersRoutes);
 app.use('/api/memories', memoriesRoutes);
 app.use('/api/couple', coupleRoutes);
+app.use('/api/games', gamesRoutes);
+app.use('/api/room', roomRoutes);
 
 /* ================= HEALTH CHECK ================= */
 

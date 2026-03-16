@@ -399,7 +399,7 @@ function CreateMoment({ onClose, onCreate }) {
 
           </div>
         {/* Fixed footer - always visible */}
-        <div className="sticky bottom-0 px-5 pt-3 pb-[calc(env(safe-area-inset-bottom)+20px)] border-t border-pink-100 bg-white dark:bg-rose-dark">
+        <div className="sticky bottom-0 px-5 pt-3 border-t border-pink-100 bg-white dark:bg-rose-dark pb-8">
           <button onClick={handleSubmit}
             disabled={uploading || (!content && mediaFiles.length === 0)}
             className="w-full py-3 rounded-xl text-white font-medium disabled:opacity-40"

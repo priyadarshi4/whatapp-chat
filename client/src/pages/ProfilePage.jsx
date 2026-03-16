@@ -186,7 +186,7 @@ export default function ProfilePage() {
             className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end">
             <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 25 }}
-              className="bg-white dark:bg-rose-dark w-full rounded-t-3xl p-6 max-h-[90vh] overflow-y-auto pb-10">
+              className="bg-white dark:bg-rose-dark w-full rounded-t-3xl p-6 max-h-[65vh] overflow-y-auto pb-10">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="font-display text-lg text-pink-500 font-semibold">Set Status 💬</h2>
                 <button onClick={() => setEditingStatus(false)} className="text-gray-400 text-2xl leading-none">×</button>

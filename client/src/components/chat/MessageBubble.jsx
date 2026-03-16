@@ -242,29 +242,111 @@ const GifBubble = ({ url }) => (
 );
 
 const VoiceNoteBubble = ({ url, isMine }) => {
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlaying]   = useState(false);
   const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [current, setCurrent]   = useState(0);
   const audioRef = useRef(null);
-  const toggle = () => {
+
+  const toggle = (e) => {
+    e.stopPropagation();
     if (!audioRef.current) return;
     if (playing) { audioRef.current.pause(); setPlaying(false); }
-    else { audioRef.current.play(); setPlaying(true); }
+    else         { audioRef.current.play();  setPlaying(true);  }
   };
+
+  const handleSeek = (e) => {
+    e.stopPropagation();
+    if (!audioRef.current || !duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    audioRef.current.currentTime = ratio * duration;
+  };
+
+  const fmt = (s) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  // Generate fake waveform bars (consistent per URL)
+  const bars = Array.from({ length: 30 }, (_, i) => {
+    const seed = (url?.charCodeAt(i % (url?.length || 1)) || i) * 13 + i * 7;
+    return 20 + (seed % 65);
+  });
+
   return (
-    <div className="flex items-center gap-2 min-w-[150px]">
-      <audio ref={audioRef} src={url} onTimeUpdate={() => {
-        if (audioRef.current) setProgress(audioRef.current.currentTime / (audioRef.current.duration || 1) * 100);
-      }} onEnded={() => { setPlaying(false); setProgress(0); }} />
-      <button onClick={(e) => { e.stopPropagation(); toggle(); }}
-        className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${isMine ? 'bg-white/30' : 'bg-pink-100'}`}>
-        {playing ? '⏸' : '▶️'}
+    <div className="flex items-center gap-2.5" style={{ minWidth: '200px', maxWidth: '240px' }}>
+      <audio
+        ref={audioRef}
+        src={url}
+        onTimeUpdate={() => {
+          if (!audioRef.current) return;
+          const d = audioRef.current.duration || 0;
+          const c = audioRef.current.currentTime;
+          setProgress(d ? c / d : 0);
+          setCurrent(c);
+        }}
+        onLoadedMetadata={() => {
+          if (audioRef.current) setDuration(audioRef.current.duration || 0);
+        }}
+        onEnded={() => { setPlaying(false); setProgress(0); setCurrent(0); }}
+      />
+
+      {/* Play / Pause button */}
+      <button
+        onClick={toggle}
+        className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-transform active:scale-90
+          ${isMine ? 'bg-white/25' : 'bg-pink-500'}`}
+        style={!isMine ? { boxShadow: '0 2px 8px rgba(255,79,139,0.4)' } : {}}
+      >
+        {playing
+          ? <svg width="14" height="14" viewBox="0 0 24 24" fill={isMine ? 'white' : 'white'}><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          : <svg width="14" height="14" viewBox="0 0 24 24" fill={isMine ? 'white' : 'white'} style={{ marginLeft: '2px' }}><path d="M8 5v14l11-7z"/></svg>
+        }
       </button>
-      <div className="flex-1">
-        <div className="h-1 rounded-full bg-white/30 overflow-hidden">
-          <div className="h-full bg-white/80 transition-all" style={{ width: `${progress}%` }} />
+
+      {/* Waveform + time */}
+      <div className="flex-1 flex flex-col gap-1.5 min-w-0">
+        {/* Waveform bars — tap to seek */}
+        <div
+          className="flex items-center gap-[2px] h-8 cursor-pointer"
+          onClick={handleSeek}
+        >
+          {bars.map((h, i) => {
+            const filled = i / bars.length <= progress;
+            return (
+              <div
+                key={i}
+                className="flex-1 rounded-full transition-all"
+                style={{
+                  height: `${h}%`,
+                  background: isMine
+                    ? (filled ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)')
+                    : (filled ? '#FF4F8B' : '#e0c0cc'),
+                  minWidth: '2px',
+                }}
+              />
+            );
+          })}
         </div>
-        <div className="text-[9px] mt-0.5 opacity-60">🎤 Voice note</div>
+
+        {/* Duration */}
+        <div className={`text-[10px] font-medium ${isMine ? 'text-white/70' : 'text-gray-400'}`}>
+          {playing ? fmt(current) : fmt(duration || 0)}
+        </div>
       </div>
+
+      {/* Mic icon */}
+      <svg
+        width="13" height="13" viewBox="0 0 24 24" fill="none" className="flex-shrink-0 opacity-60"
+        stroke={isMine ? 'white' : '#FF4F8B'} strokeWidth="2" strokeLinecap="round"
+      >
+        <rect x="9" y="2" width="6" height="12" rx="3"/>
+        <path d="M5 10a7 7 0 0014 0"/>
+        <line x1="12" y1="19" x2="12" y2="22"/>
+        <line x1="9" y1="22" x2="15" y2="22"/>
+      </svg>
     </div>
   );
 };

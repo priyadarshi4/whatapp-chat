@@ -328,10 +328,10 @@ function CreateMoment({ onClose, onCreate }) {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center">
+      className="fixed inset-0 z-[9999] bg-black/50 backdrop-blur-sm flex items-center justify-center">
       <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 25 }}
-        className="bg-white dark:bg-rose-dark w-full rounded-t-3xl flex flex-col h-[90vh]">
+        className="bg-white dark:bg-rose-dark w-full rounded-t-3xl flex flex-col h-[92vh]">
           {/* Fixed header */}
           <div className="flex items-center justify-between px-5 pt-5 pb-3 flex-shrink-0">
             <h2 className="font-display text-lg text-pink-500 font-semibold">Share a Moment 🌸</h2>
@@ -399,7 +399,7 @@ function CreateMoment({ onClose, onCreate }) {
 
           </div>
         {/* Fixed footer - always visible */}
-        <div className="sticky bottom-0 px-5 pt-3 border-t border-pink-100 bg-white dark:bg-rose-dark pb-8">
+        <div className="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mt-2 mb-4">
           <button onClick={handleSubmit}
             disabled={uploading || (!content && mediaFiles.length === 0)}
             className="w-full py-3 rounded-xl text-white font-medium disabled:opacity-40"

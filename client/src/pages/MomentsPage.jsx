@@ -331,14 +331,14 @@ function CreateMoment({ onClose, onCreate }) {
       className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center">
       <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 25 }}
-        className="bg-white dark:bg-rose-dark w-full rounded-t-3xl flex flex-col h-[85vh]">
+        className="bg-white dark:bg-rose-dark w-full rounded-t-3xl flex flex-col h-[90vh]">
           {/* Fixed header */}
           <div className="flex items-center justify-between px-5 pt-5 pb-3 flex-shrink-0">
             <h2 className="font-display text-lg text-pink-500 font-semibold">Share a Moment 🌸</h2>
             <button onClick={onClose} className="text-gray-400 text-2xl leading-none">×</button>
           </div>
           {/* Scrollable body */}
-          <div className="flex-1 overflow-y-auto px-5 pb-2 space-y-4">
+          <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-4 overscroll-contain">
             
 
           {/* Type selector */}
@@ -399,7 +399,7 @@ function CreateMoment({ onClose, onCreate }) {
 
           </div>
         {/* Fixed footer - always visible */}
-        <div className="sticky bottom-0 px-5 pt-3 pb-6 border-t border-pink-100 bg-white dark:bg-rose-dark">
+        <div className="sticky bottom-0 px-5 pt-3 pb-[calc(env(safe-area-inset-bottom)+20px)] border-t border-pink-100 bg-white dark:bg-rose-dark">
           <button onClick={handleSubmit}
             disabled={uploading || (!content && mediaFiles.length === 0)}
             className="w-full py-3 rounded-xl text-white font-medium disabled:opacity-40"

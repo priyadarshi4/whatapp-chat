@@ -183,7 +183,7 @@ export default function ProfilePage() {
       <AnimatePresence>
         {editingStatus && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end pb-20">
+            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end pb-2">
             <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 25 }}
               className="bg-white dark:bg-rose-dark w-full rounded-t-3xl p-6 max-h-[65vh] overflow-y-auto pb-10">
@@ -191,7 +191,7 @@ export default function ProfilePage() {
                 <h2 className="font-display text-lg text-pink-500 font-semibold">Set Status 💬</h2>
                 <button onClick={() => setEditingStatus(false)} className="text-gray-400 text-2xl leading-none">×</button>
               </div>
-              <p className="text-xs text-gray-400 mb-3">Like WhatsApp — shows next to your name</p>
+              <p className="text-xs text-gray-400 mb-3">Hello Baby Ky soch rhe ho.....</p>
               <input value={statusText} onChange={e => setStatusText(e.target.value)}
                 placeholder="Available, Busy, In love... 💕" maxLength={100}
                 className="w-full px-4 py-3 rounded-xl border border-pink-200 text-sm outline-none focus:border-pink-400 mb-2" />

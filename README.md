@@ -3,7 +3,6 @@
 A production-grade WhatsApp Web clone built with modern scalable technologies.
 
 ---
-
 ## 🚀 Tech Stack
 
 ### Frontend
@@ -317,6 +316,7 @@ docker-compose down
 ```
 
 ---
+
 
 ## 📄 License
 
